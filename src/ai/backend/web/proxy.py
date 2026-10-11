@@ -176,6 +176,12 @@ async def decrypt_payload(
         )
         if scheme is None:
             scheme = request.scheme
+
+        # dolab으로 시작하는 호스트는 https로 강제 변경
+        host = request.host
+        if host.startswith("dolab"):
+            scheme = "https"
+
         api_endpoint = f"{scheme}://{request.host}"
         payload = await request.read()
         request["payload"] = _decrypt_payload(api_endpoint, payload)

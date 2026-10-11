@@ -1,8 +1,9 @@
 [general]
-{% toml_field "apiEndpoint" endpoint_url %}
-{% toml_field "apiEndpointText" config["api"]["text"] %}
+{% set processed_endpoint = endpoint_url.replace('http://dolab', 'https://dolab') if endpoint_url.startswith('http://dolab') else endpoint_url %}
+{% toml_field "apiEndpoint" processed_endpoint %}
+apiEndpointText = "DOLAB GPU"
 {% toml_field "defaultSessionEnvironment" config["ui"]["default-environment"] %}
-{% toml_field "defaultImportEnvironment" config["ui"]["default-import-environment"] %}
+defaultImportEnvironment = "cr.backend.ai/multiarch/python:3.12-ubuntu24.04-cuda12.6.1@x86_64"
 {% toml_field "enableModelFolders" config["ui"]["enable-model-folders"] %}
 connectionMode = "SESSION"
 {% toml_field "signupSupport" config["service"]["enable-signup"] %}
@@ -22,15 +23,15 @@ connectionMode = "SESSION"
 {% toml_field "appDownloadUrl" config["service"]["app-download-url"] %}
 {% toml_field "allowAppDownloadPanel" config["service"]["allow-app-download-panel"] %}
 {% toml_field "force2FA" config["service"]["force-2FA"] %}
-{% toml_field "systemSSHImage" config["service"]["system-SSH-image"] %}
-{% toml_field "directoryBasedUsage" config["service"]["directory-based-usage"] %}
+systemSSHImage = "cr.backend.ai/multiarch/python:3.12-ubuntu24.04-cuda12.6.1@x86_64"
+directoryBasedUsage = true
 {% toml_field "maxCountForPreopenPorts" config["session"]["max-count-for-preopen-ports"] %}
 {% toml_field "allowCustomResourceAllocation" config["service"]["allow-custom-resource-allocation"] %}
 {% toml_field "allowThemeMode" config["service"]["allow-theme-mode"] %}
 {% toml_field "isDirectorySizeVisible" config["service"]["is-directory-size-visible"] %}
-{% toml_field "eduAppNamePrefix" config["service"]["edu-appname-prefix"] %}
-{% toml_field "enableExtendLoginSession" config["service"]["enable-extend-login-session"] %}
-{% toml_field "enableInteractiveLoginAccountSwitch" config["service"]["enable-interactive-login-account-switch"] %}
+eduAppNamePrefix = "DOLAB GPU"
+enableExtendLoginSession = true
+enableImportFromHuggingFace = true
 {% toml_field "defaultFileBrowserImage" config["service"]["default-file-browser-image"] %}
 {% toml_field "enableReservoir" config["service"]["enable-reservoir"] %}
 
