@@ -188,6 +188,11 @@ def storage_namespace() -> None:
     """Storage namespace commands."""
 
 
+@v2.group(cls=LazyGroup, import_name="ai.backend.client.cli.v2.session_share:session_share")
+def session_share() -> None:
+    """Session sharing commands."""
+
+
 @v2.group(cls=LazyGroup, import_name="ai.backend.client.cli.v2.object_storage:object_storage")
 def object_storage() -> None:
     """Object storage commands."""

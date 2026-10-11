@@ -455,6 +455,7 @@ class LayerType(enum.StrEnum):
     SCHEDULING_HISTORY_REPOSITORY = "scheduling_history_repository"
     SESSION_REPOSITORY = "session_repository"
     STORAGE_NAMESPACE_REPOSITORY = "storage_namespace_repository"
+    SESSION_SHARE_REPOSITORY = "session_share_repository"
     USER_REPOSITORY = "user_repository"
     USER_RESOURCE_POLICY_REPOSITORY = "user_resource_policy_repository"
     VFOLDER_ADMIN_REPOSITORY = "vfolder_admin_repository"

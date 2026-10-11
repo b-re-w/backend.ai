@@ -169,7 +169,11 @@ class Circuit(Base, BaseMixin):  # type: ignore[misc]
         app: str,
         open_to_public: bool,
         allowed_client_ips: str | None,
+        user_id: UUID | None = None,
     ) -> "Circuit":
+        # Each user gets their own circuit: the worker accepts only the circuit user's
+        # permit, and a shared session has several users (BEP-1073).
+        user_cond = Circuit.user_id == user_id if user_id is not None else sa.true()
         query = (
             sa.select(Circuit)
             .where(
@@ -177,6 +181,7 @@ class Circuit(Base, BaseMixin):  # type: ignore[misc]
                 & (Circuit.app == app)
                 & (Circuit.open_to_public == open_to_public)
                 & (Circuit.allowed_client_ips == allowed_client_ips)
+                & user_cond
             )
             .options(selectinload(Circuit.worker_row))
         )

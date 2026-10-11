@@ -114,6 +114,35 @@ async def delete_circuit_bulk(
     return PydanticResponse(StubResponseModel(success=True))
 
 
+@auth_required("manager")
+@pydantic_api_response_handler
+async def delete_session_user_circuits(request: web.Request) -> PydanticResponse[StubResponseModel]:
+    """
+    Removes the circuits a user holds on a session, from both coordinator and worker.
+    The manager calls this when the user's access to a shared session is revoked.
+    """
+    root_ctx: RootContext = request.app["_root.context"]
+    session_id = UUID(request.match_info["session_id"])
+    user_id = UUID(request.match_info["user_id"])
+
+    async def _update(sess: SASession) -> Sequence[Circuit]:
+        query = (
+            sa.select(Circuit)
+            .where(Circuit.session_ids.contains([session_id]) & (Circuit.user_id == user_id))
+            .options(selectinload(Circuit.worker_row))
+        )
+        circuits = (await sess.execute(query)).scalars().all()
+        for circuit in circuits:
+            circuit.worker_row.occupied_slots -= 1
+            await sess.delete(circuit)
+        return circuits
+
+    async with root_ctx.db.connect() as db_conn:
+        circuits = await execute_with_txn_retry(_update, root_ctx.db.begin_session, db_conn)
+    await root_ctx.circuit_manager.unload_circuits(circuits)
+    return PydanticResponse(StubResponseModel(success=True))
+
+
 @auth_required("worker")
 @pydantic_api_response_handler
 async def get_circuit_statistics(request: web.Request) -> PydanticResponse[CircuitStatisticsModel]:
@@ -171,6 +200,11 @@ def create_app(
     cors = aiohttp_cors.setup(app, defaults=default_cors_options)
     add_route = app.router.add_route
     cors.add(add_route("DELETE", "/_/bulk", delete_circuit_bulk))
+    cors.add(
+        add_route(
+            "DELETE", "/_/sessions/{session_id}/users/{user_id}", delete_session_user_circuits
+        )
+    )
     cors.add(add_route("GET", "/{circuit_id}", get_circuit))
     cors.add(add_route("GET", "/{circuit_id}/statistics", get_circuit_statistics))
     cors.add(add_route("DELETE", "/{circuit_id}", delete_circuit))

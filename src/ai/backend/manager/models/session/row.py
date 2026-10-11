@@ -35,6 +35,8 @@ from sqlalchemy.orm import (
 )
 from sqlalchemy.orm.strategy_options import _AbstractLoad
 
+from ai.backend.common.data.permission.types import EntityType, OperationType
+from ai.backend.common.data.permission.types import ScopeType as RBACScopeType
 from ai.backend.common.defs.session import JOB_PRIORITY_DEFAULT, SESSION_PRIORITY_DEFAULT
 from ai.backend.common.exception import BackendAIError
 from ai.backend.common.identifier.domain import DomainID
@@ -67,6 +69,7 @@ from ai.backend.manager.data.session.types import (
     SessionNetwork,
     SessionStatus,
 )
+from ai.backend.manager.data.session_share.types import SESSION_SHARE_DEAD_STATUSES
 from ai.backend.manager.data.user.types import UserData
 from ai.backend.manager.defs import DEFAULT_ROLE
 from ai.backend.manager.errors.kernel import (
@@ -1584,7 +1587,51 @@ async def get_permission_ctx(
 ) -> ComputeSessionPermissionContext:
     async with ctx.db.begin_readonly_session(db_conn) as db_session:
         builder = ComputeSessionPermissionContextBuilder(db_session)
-        return await builder.build(ctx, target_scope, requested_permission)
+        permission_ctx = await builder.build(ctx, target_scope, requested_permission)
+        shared = await _shared_session_permissions(db_session, ctx.user_id)
+    additional = dict(permission_ctx.object_id_to_additional_permission_map)
+    for session_id, permissions in shared.items():
+        if requested_permission in permissions:
+            additional[session_id] = additional.get(session_id, frozenset()) | permissions
+    permission_ctx.object_id_to_additional_permission_map = additional
+    return permission_ctx
+
+
+# Session sharing (BEP-1073): RBAC operations granted on a session to an invitee,
+# and the compute-session permissions they amount to.
+_SHARED_OPERATION_PERMISSIONS: Mapping[OperationType, frozenset[ComputeSessionPermission]] = {
+    OperationType.READ: frozenset({ComputeSessionPermission.READ_ATTRIBUTE}),
+    OperationType.CREATE: frozenset({ComputeSessionPermission.START_APP}),
+    OperationType.UPDATE: frozenset({ComputeSessionPermission.EXECUTE}),
+}
+
+
+async def _shared_session_permissions(
+    db_session: SASession, user_id: UUID
+) -> Mapping[SessionId, frozenset[ComputeSessionPermission]]:
+    """Live sessions shared with the user, with the permissions each share grants."""
+    from ai.backend.manager.models.rbac_models.permission.permission import PermissionRow
+    from ai.backend.manager.models.rbac_models.user_role import UserRoleRow
+
+    query = (
+        sa.select(SessionRow.id, PermissionRow.operation)
+        .select_from(PermissionRow)
+        .join(UserRoleRow, UserRoleRow.role_id == PermissionRow.role_id)
+        .join(SessionRow, sa.cast(SessionRow.id, sa.String) == PermissionRow.scope_id)
+        .where(
+            UserRoleRow.user_id == user_id,
+            PermissionRow.scope_type == RBACScopeType.SESSION,
+            PermissionRow.entity_type == EntityType.SESSION,
+            PermissionRow.operation.in_(_SHARED_OPERATION_PERMISSIONS.keys()),
+            SessionRow.status.not_in(SESSION_SHARE_DEAD_STATUSES),
+        )
+    )
+    result: dict[SessionId, frozenset[ComputeSessionPermission]] = {}
+    for session_id, operation in (await db_session.execute(query)).all():
+        result[session_id] = (
+            result.get(session_id, frozenset()) | _SHARED_OPERATION_PERMISSIONS[operation]
+        )
+    return result
 
 
 async def batch_populate_session_occupied_slots(

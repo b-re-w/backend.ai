@@ -116,6 +116,8 @@ def build_v2_routes(
     from .service_catalog.registry import register_v2_service_catalog_routes
     from .session.handler import V2SessionHandler
     from .session.registry import register_v2_session_routes
+    from .session_share.handler import V2SessionShareHandler
+    from .session_share.registry import add_v2_session_share_routes
     from .storage_host.handler import V2StorageHostHandler
     from .storage_host.registry import register_v2_storage_host_routes
     from .storage_namespace.handler import V2StorageNamespaceHandler
@@ -187,6 +189,7 @@ def build_v2_routes(
     scheduling_history_handler = V2SchedulingHistoryHandler(adapter=adapters.scheduling_history)
     service_catalog_handler = V2ServiceCatalogHandler(adapter=adapters.service_catalog)
     session_handler = V2SessionHandler(adapter=adapters.session)
+    session_share_handler = V2SessionShareHandler(adapter=adapters.session_share)
     storage_host_handler = V2StorageHostHandler(adapter=adapters.storage_host)
     storage_namespace_handler = V2StorageNamespaceHandler(adapter=adapters.storage_namespace)
     user_handler = V2UserHandler(adapter=adapters.user)
@@ -277,7 +280,11 @@ def build_v2_routes(
         register_v2_scheduling_history_routes(scheduling_history_handler, route_deps)
     )
     v2_reg.add_subregistry(register_v2_service_catalog_routes(service_catalog_handler, route_deps))
-    v2_reg.add_subregistry(register_v2_session_routes(session_handler, route_deps))
+    v2_reg.add_subregistry(
+        add_v2_session_share_routes(
+            register_v2_session_routes(session_handler, route_deps), session_share_handler
+        )
+    )
     v2_reg.add_subregistry(register_v2_storage_host_routes(storage_host_handler, route_deps))
     v2_reg.add_subregistry(
         register_v2_storage_namespace_routes(storage_namespace_handler, route_deps)

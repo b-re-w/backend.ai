@@ -30,6 +30,11 @@ class SessionIdPathParam(BaseRequestModel):
     session_id: UUID = Field(description="Session UUID")
 
 
+class SessionShareUserPathParam(BaseRequestModel):
+    session_id: UUID = Field(description="Session UUID")
+    user_id: UUID = Field(description="Invitee user UUID")
+
+
 class StorageIdPathParam(BaseRequestModel):
     storage_id: UUID = Field(description="Storage UUID")
 

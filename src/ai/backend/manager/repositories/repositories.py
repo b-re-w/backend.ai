@@ -82,6 +82,7 @@ from ai.backend.manager.repositories.scheduling_history.repositories import (
     SchedulingHistoryRepositories,
 )
 from ai.backend.manager.repositories.session.repositories import SessionRepositories
+from ai.backend.manager.repositories.session_share.repositories import SessionShareRepositories
 from ai.backend.manager.repositories.storage_namespace.repositories import (
     StorageNamespaceRepositories,
 )
@@ -150,6 +151,7 @@ class Repositories:
     stream: StreamRepositories
     events: EventsRepositories
     storage_namespace: StorageNamespaceRepositories
+    session_share: SessionShareRepositories
     audit_log: AuditLogRepositories
     retention: RetentionRepositories
 
@@ -209,6 +211,7 @@ class Repositories:
         stream_repositories = StreamRepositories.create(args)
         events_repositories = EventsRepositories.create(args)
         storage_namespace_repositories = StorageNamespaceRepositories.create(args)
+        session_share_repositories = SessionShareRepositories.create(args)
         audit_log_repositories = AuditLogRepositories.create(args)
         retention_repositories = RetentionRepositories.create(args)
 
@@ -265,6 +268,7 @@ class Repositories:
             stream=stream_repositories,
             events=events_repositories,
             storage_namespace=storage_namespace_repositories,
+            session_share=session_share_repositories,
             audit_log=audit_log_repositories,
             retention=retention_repositories,
         )

@@ -305,6 +305,12 @@ if TYPE_CHECKING:
         SessionProcessors,
     )
     from ai.backend.manager.services.session.service import SessionService
+    from ai.backend.manager.services.session_share.processors import (
+        SessionShareProcessors,
+    )
+    from ai.backend.manager.services.session_share.service import (
+        SessionShareService,
+    )
     from ai.backend.manager.services.storage_namespace.processors import (
         StorageNamespaceProcessors,
     )
@@ -451,6 +457,7 @@ class Services:
     artifact_registry: ArtifactRegistryService
     deployment: DeploymentService
     storage_namespace: StorageNamespaceService
+    session_share: SessionShareService
     audit_log: AuditLogService
     idle_checker_assignment: IdleCheckerAssignmentService
     scheduling_history: SchedulingHistoryService
@@ -523,6 +530,7 @@ class Processors(AbstractProcessorPackage):
     artifact_revision: ArtifactRevisionProcessors
     deployment: DeploymentProcessors
     storage_namespace: StorageNamespaceProcessors
+    session_share: SessionShareProcessors
     audit_log: AuditLogProcessors
     idle_checker_assignment: IdleCheckerAssignmentProcessors
     scheduling_history: SchedulingHistoryProcessors
@@ -588,6 +596,7 @@ class Processors(AbstractProcessorPackage):
             *self.artifact.supported_actions(),
             *self.deployment.supported_actions(),
             *self.storage_namespace.supported_actions(),
+            *self.session_share.supported_actions(),
             *self.audit_log.supported_actions(),
             *self.idle_checker_assignment.supported_actions(),
             *self.scheduling_history.supported_actions(),

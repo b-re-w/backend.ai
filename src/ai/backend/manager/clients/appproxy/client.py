@@ -162,6 +162,22 @@ class AppProxyClient:
             pass
 
     @appproxy_client_resilience.apply()
+    async def delete_session_user_circuits(
+        self,
+        session_id: UUID,
+        user_id: UUID,
+    ) -> None:
+        """Drop the app circuits a user holds on a session (session sharing, BEP-1073)."""
+        async with self._client_session.delete(
+            f"/api/circuit/_/sessions/{session_id}/users/{user_id}",
+            headers={
+                "Accept": "application/json",
+                "X-BackendAI-Token": self._token,
+            },
+        ) as resp:
+            resp.raise_for_status()
+
+    @appproxy_client_resilience.apply()
     async def bulk_update_routes(
         self,
         body: BulkUpdateRoutesRequest,

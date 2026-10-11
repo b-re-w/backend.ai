@@ -23,6 +23,7 @@ from ai.backend.manager.data.session.types import (
     SessionListResult,
     SessionRoutingInfo,
 )
+from ai.backend.manager.data.session_share.types import SessionShareGrant
 from ai.backend.manager.data.user.types import SessionOwnerContext, UserData
 from ai.backend.manager.models.container_registry import ContainerRegistryRow
 from ai.backend.manager.models.image import ImageRow
@@ -63,6 +64,12 @@ class SessionRepository:
     @session_repository_resilience.apply()
     async def get_session_owner(self, session_id: str | SessionId) -> UserData:
         return await self._db_source.get_session_owner(session_id)
+
+    @session_repository_resilience.apply()
+    async def get_session_share_grant(
+        self, session_id: SessionId, user_id: uuid.UUID
+    ) -> SessionShareGrant:
+        return await self._db_source.get_session_share_grant(session_id, user_id)
 
     @session_repository_resilience.apply()
     async def resolve_session_id(

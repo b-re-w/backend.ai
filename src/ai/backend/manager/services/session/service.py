@@ -19,6 +19,8 @@ from aiohttp.multipart import BodyPartReader
 from dateutil.tz import tzutc
 
 from ai.backend.common.bgtask.bgtask import BackgroundTaskManager
+from ai.backend.common.contexts.user import current_user
+from ai.backend.common.data.permission.types import OperationType
 from ai.backend.common.data.session.types import CustomizedImageVisibilityScope
 from ai.backend.common.defs.session import JOB_PRIORITY_DEFAULT, SESSION_PRIORITY_DEFAULT
 from ai.backend.common.events.event_types.kernel.types import KernelLifecycleEventReason
@@ -44,6 +46,7 @@ from ai.backend.common.types import (
     ContainerId,
     ImageAlias,
     ResourceSlotEntry,
+    SessionId,
     SessionTypes,
 )
 from ai.backend.logging.utils import BraceStyleAdapter
@@ -91,6 +94,7 @@ from ai.backend.manager.errors.resource import (
     NoCurrentTaskContext,
     TaskTemplateNotFound,
 )
+from ai.backend.manager.errors.session_share import SessionShareAccessDenied
 from ai.backend.manager.errors.storage import VFolderBadRequest
 from ai.backend.manager.idle import IdleCheckerHost
 from ai.backend.manager.models.group import GroupRow
@@ -98,6 +102,7 @@ from ai.backend.manager.models.session import (
     DEAD_SESSION_STATUSES,
     PRIVATE_SESSION_TYPES,
     KernelLoadingStrategy,
+    SessionRow,
 )
 from ai.backend.manager.registry import AgentRegistry
 from ai.backend.manager.repositories.scheduler.repository import SchedulerRepository
@@ -273,6 +278,14 @@ class SessionServiceArgs:
     scheduling_controller: SchedulingController
     appproxy_client_pool: AppProxyClientPool
     user_repository: UserRepository
+
+
+def _session_id_or_none(session_name_or_id: str) -> SessionId | None:
+    """The session id if the reference is UUID-shaped; shares are addressed by id only."""
+    try:
+        return SessionId(uuid.UUID(session_name_or_id))
+    except ValueError:
+        return None
 
 
 class SessionService:
@@ -988,10 +1001,8 @@ class SessionService:
         api_version = action.api_version
 
         resp = {}
-        session = await self._session_repository.get_session_validated(
-            session_name,
-            owner_access_key,
-            kernel_loading_strategy=KernelLoadingStrategy.MAIN_KERNEL_ONLY,
+        session = await self._get_session_or_shared(
+            session_name, owner_access_key, OperationType.UPDATE
         )
         try:
             run_id: str | None
@@ -1268,14 +1279,62 @@ class SessionService:
 
         return GetStatusHistoryActionResult(status_history=result, session_id=session_row.id)
 
+    async def _get_session_or_shared(
+        self,
+        session_name: str,
+        owner_access_key: AccessKey,
+        operation: OperationType,
+    ) -> SessionRow:
+        """The requester's own session, or one shared with them for `operation` (BEP-1073)."""
+        try:
+            return await self._session_repository.get_session_validated(
+                session_name,
+                owner_access_key,
+                kernel_loading_strategy=KernelLoadingStrategy.MAIN_KERNEL_ONLY,
+            )
+        except SessionNotFound:
+            me = current_user()
+            session_id = _session_id_or_none(session_name)
+            if me is None or session_id is None:
+                raise
+            grant = await self._session_repository.get_session_share_grant(session_id, me.user_id)
+            if operation not in grant.operations or grant.owner_access_key is None:
+                raise
+            return await self._session_repository.get_session_validated(
+                session_name,
+                AccessKey(grant.owner_access_key),
+                kernel_loading_strategy=KernelLoadingStrategy.MAIN_KERNEL_ONLY,
+            )
+
+    async def _app_user_identity(
+        self,
+        session_id: SessionId,
+        owner_uuid: uuid.UUID,
+        owner_access_key: AccessKey | None,
+    ) -> tuple[uuid.UUID, AccessKey | None]:
+        """Whose app circuit to open: the owner's, or an invitee's own (BEP-1073).
+
+        A requester that neither owns the session nor holds a share with the
+        ``create`` operation on it (start-app) is refused; superadmins and internal
+        callers without a user context act as the owner.
+        """
+        me = current_user()
+        if me is None or me.is_superadmin or me.user_id == owner_uuid:
+            return owner_uuid, owner_access_key
+        grant = await self._session_repository.get_session_share_grant(session_id, me.user_id)
+        if OperationType.CREATE not in grant.operations:
+            raise SessionShareAccessDenied(f"Session {session_id} is not shared with you.")
+        invitee_access_key = (
+            AccessKey(grant.invitee_access_key) if grant.invitee_access_key else None
+        )
+        return me.user_id, invitee_access_key
+
     async def interrupt(self, action: InterruptSessionAction) -> InterruptSessionActionResult:
         session_name = action.session_name
         owner_access_key = action.owner_access_key
 
-        session = await self._session_repository.get_session_validated(
-            session_name,
-            owner_access_key,
-            kernel_loading_strategy=KernelLoadingStrategy.MAIN_KERNEL_ONLY,
+        session = await self._get_session_or_shared(
+            session_name, owner_access_key, OperationType.UPDATE
         )
         await self._agent_registry.interrupt_session(session)
 
@@ -1371,6 +1430,9 @@ class SessionService:
 
         info = await self._session_repository.get_session_with_routing_minimal(session_id)
         session_data = info.session
+        app_user_uuid, app_access_key = await self._app_user_identity(
+            SessionId(session_id), session_data.user_uuid, session_data.access_key
+        )
 
         if session_data.scaling_group_name is None:
             raise ServiceUnavailable("Session has no scaling group assigned")
@@ -1445,9 +1507,9 @@ class SessionService:
             "kernel_port": host_port,
             "session": {
                 "id": str(session_data.id),
-                "user_uuid": str(session_data.user_uuid),
+                "user_uuid": str(app_user_uuid),
                 "group_id": str(session_data.group_id),
-                "access_key": session_data.access_key,
+                "access_key": app_access_key,
                 "domain_name": session_data.domain_name,
             },
         }

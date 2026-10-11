@@ -12,8 +12,8 @@ Implemented-Version:
 <!-- context-for-ai
 type: tech-spec
 scope: Let a session owner invite users of the same project into a running interactive session (view it, open its apps) on top of the BEP-1012 RBAC data model.
-key-constraints: [invitees must belong to the session's project, a share ends with the session, invitees get read + start-app only, no schema change, global RBAC enforcement stays as configured]
-key-decisions: [compute_session:assignment modeled as ref edge + entity-scoped permissions (BEP-1012), dedicated share check in session paths until the generic checker walks entity scopes, per-user app-proxy circuits]
+key-constraints: [invitees must belong to the session's project, a share ends with the session, two share levels (app / execute), no schema change, global RBAC enforcement stays as configured]
+key-decisions: [compute_session:assignment modeled as ref edge + entity-scoped permissions (BEP-1012), the generic scope-chain checker also honors entity-scoped permissions, owner / project admin / superadmin manage shares, per-user app-proxy circuits]
 phases: 3
 -->
 
@@ -44,7 +44,7 @@ BEP-1012 lists sessions among the entities that lack systematic sharing and name
 | Every user has a personal "user owner" role (a role with a `user`-scoped permission on that user) | ✅ exists (populated for all users) |
 | `association_scopes_entities` with `auto` (ownership) and `ref` (visibility) edges | ✅ exists; vfolder invitations already migrated to `ref` edges |
 | Entity-scoped permissions (`permissions.scope_type = <entity type>`) | ✅ exists; used by migrated vfolder shares |
-| Generic checker (`check_permission_with_scope_chain`) follows entity-scoped permissions | ❌ walks AUTO parent scopes only |
+| Generic checker (`check_permission_with_scope_chain`) honors entity-scoped permissions | ✅ exists (self-scope branch next to the AUTO scope walk) |
 | Session sharing grant / revoke / list | ➕ to add |
 
 ### Session access (manager)
@@ -80,22 +80,31 @@ for vfolder sharing, so no table is added:
 
 - a `ref` edge in `association_scopes_entities`: scope `user:U` → entity `session:S`;
 - entity-scoped permissions on *U*'s user-owner role:
-  `scope_type = session`, `scope_id = S`, `entity_type = session`,
-  operations `read` and `create`.
+  `scope_type = session`, `scope_id = S`, `entity_type = session`, by share level:
 
-`create` is used because starting an app is a CREATE operation on the session
-(`StartServiceAction`). Invitees never receive `update`, `soft-delete`,
-`hard-delete` or `grant:*`, so they cannot rename, terminate, commit or reshare.
+| Level | Operations | Invitee can |
+|-------|------------|-------------|
+| `app` (default) | `read`, `create` | see the session, open its apps (start-app is a CREATE operation) |
+| `execute` | `read`, `create`, `update` | also run code through the execute API and interrupt it (execute is an UPDATE operation) |
+
+Invitees never receive `soft-delete`, `hard-delete` or `grant:*`, so they cannot
+terminate, purge or reshare. RBAC operations are coarse: `update` also covers
+renaming and modifying the session, so session paths open only execute/interrupt
+to the `execute` level; rename/modify stay owner-only.
 
 A share is live only while *S* is alive (not TERMINATING / TERMINATED / ERROR /
 CANCELLED). Rows of ended sessions are ignored by every check and purged
 (on share mutations and when the session terminates).
 
-### Operations (REST v2, owner of the session; superadmin allowed)
+### Operations (REST v2)
+
+Who may manage the shares of a session: its owner, a project admin of the
+session's project (a role holding `grant:all` on `session` in that project scope,
+as the system project-admin role does), and a superadmin.
 
 | Operation | Endpoint | Contract |
 |-----------|----------|----------|
-| create | `POST /v2/sessions/{session_id}/shares` | body: invitee (user id or email). Fails if the invitee is not a member of the session's project, is the owner, or the session is not alive. Idempotent. |
+| create | `POST /v2/sessions/{session_id}/shares` | body: invitee (user id or email), level (`app` / `execute`). Fails if the invitee is not a member of the session's project, is the owner, or the session is not alive. Re-sharing replaces the level. |
 | search | `POST /v2/sessions/{session_id}/shares/search` | invitees of the session (user id, email, username, granted at) |
 | delete | `DELETE /v2/sessions/{session_id}/shares/{user_id}` | removes the edge and the permissions, then asks the app proxy to drop the invitee's circuits for the session |
 
@@ -114,10 +123,14 @@ in `common/dto/manager/v2/session_share/`. SDK v2 and CLI v2 commands mirror the
   resolution. The app-proxy configuration request carries the **requester's**
   identity (user id, access key), so the circuit and its permit belong to the
   invitee.
-- **Check.** A dedicated repository check ("is session *S* shared with user *U*
-  for operation *O*") reads the entity-scoped permissions. It is used by the two
-  paths above and can be folded into the generic RBAC checker once that walks
-  entity scopes.
+- **Execute.** With the `execute` level, session resolution for the execute and
+  interrupt APIs also accepts the shared session.
+- **Check.** A repository check ("is session *S* shared with user *U* for
+  operation *O*") reads the entity-scoped permissions and backs the paths above.
+- **Generic checker.** `check_permission_with_scope_chain` (and its bulk form)
+  already matches permissions whose scope is the target entity itself, so the
+  stored shares let invitees pass `rbac_single_entity_validators` when
+  enforcement is enabled; no change is needed there.
 
 ### App proxy
 
@@ -138,8 +151,8 @@ in `common/dto/manager/v2/session_share/`. SDK v2 and CLI v2 commands mirror the
 ## Implementation Plan
 
 1. **Manager**: repository + service + adapter + REST v2 for shares; invitee
-   visibility in the permission context; invitee start-app resolution with the
-   requester's identity; purge on termination. Tests per layer.
+   visibility in the permission context; invitee start-app / execute resolution
+   with the requester's identity; purge on termination. Tests per layer.
 2. **App proxy**: per-user circuit reuse; drop-circuits call; manager revoke hook.
 3. **Clients**: SDK v2 + CLI v2; WebUI share dialog and "shared with me" marking.
 
@@ -150,17 +163,14 @@ in `common/dto/manager/v2/session_share/`. SDK v2 and CLI v2 commands mirror the
 | Same-project invitees only | Matches project-level collaboration and resource policy |
 | Share ends with the session | A share is an invitation into that running session, nothing else |
 | `ref` edge + entity-scoped permissions, no new table | The BEP-1012 `{entity}:assignment` model; already used by migrated vfolder shares |
-| Invitee operations: `read` + `create` (start app) only | Collaboration without ownership powers (terminate, commit, reshare) |
-| Dedicated share check in session paths | The generic checker does not walk entity scopes yet; enforcement stays as configured |
+| Two share levels: `app` (read + create) and `execute` (+ update, used for execute/interrupt only) | Opening apps already allows running code; `execute` adds the API path for CLI/SDK users. No ownership powers (terminate, commit, reshare) |
+| Owner, project admin and superadmin manage shares | BEP-1012 "Session Access Control": project admins manage access to their project's sessions |
+| Shares stored as entity-scoped permissions the generic checker already reads | Invitees keep working when RBAC enforcement is enabled, without touching the checker |
 | Per-user circuits | The worker binds permits to the circuit's user; sharing must not weaken that check |
 
 ## Open Questions
 
-1. Should the generic scope-chain checker follow entity-scoped permissions, so
-   that invitees pass `rbac_single_entity_validators` with enforcement enabled?
-2. Should invitees get `EXECUTE` (code execution API) as an opt-in level?
-3. Project admins: may they create shares on sessions of their project
-   (BEP-1012 "Session Access Control")?
+- None.
 
 ## References
 

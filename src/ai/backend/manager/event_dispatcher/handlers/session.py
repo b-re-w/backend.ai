@@ -43,6 +43,7 @@ from ai.backend.manager.models.utils import (
     execute_with_retry,
 )
 from ai.backend.manager.registry import AgentRegistry
+from ai.backend.manager.repositories.session_share.repository import SessionShareRepository
 from ai.backend.manager.sokovan.scheduling_controller import SchedulingController
 
 log = BraceStyleAdapter(logging.getLogger(__spec__.name))
@@ -54,6 +55,7 @@ class SessionEventHandler:
     _event_dispatcher_plugin_ctx: EventDispatcherPluginContext
     _scheduling_controller: SchedulingController
     _valkey_live: ValkeyLiveClient
+    _session_share_repository: SessionShareRepository | None
 
     def __init__(
         self,
@@ -62,12 +64,14 @@ class SessionEventHandler:
         event_dispatcher_plugin_ctx: EventDispatcherPluginContext,
         scheduling_controller: SchedulingController,
         valkey_live: ValkeyLiveClient,
+        session_share_repository: SessionShareRepository | None = None,
     ) -> None:
         self._registry = registry
         self._db = db
         self._event_dispatcher_plugin_ctx = event_dispatcher_plugin_ctx
         self._scheduling_controller = scheduling_controller
         self._valkey_live = valkey_live
+        self._session_share_repository = session_share_repository
 
     async def _handle_started_or_cancelled(
         self,
@@ -132,6 +136,9 @@ class SessionEventHandler:
     ) -> None:
         await self._valkey_live.delete_session_last_access(event.session_id)
         await self._registry.clean_session(event.session_id)
+        if self._session_share_repository is not None:
+            # A share ends with the session (BEP-1073).
+            await self._session_share_repository.purge_session(event.session_id)
         await self.invoke_session_callback(None, source, event)
 
     async def handle_destroy_session(

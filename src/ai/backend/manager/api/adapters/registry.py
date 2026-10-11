@@ -61,6 +61,7 @@ from ai.backend.manager.api.adapters.scheduling_handler.adapter import Schedulin
 from ai.backend.manager.api.adapters.scheduling_history.adapter import SchedulingHistoryAdapter
 from ai.backend.manager.api.adapters.service_catalog.adapter import ServiceCatalogAdapter
 from ai.backend.manager.api.adapters.session.adapter import SessionAdapter
+from ai.backend.manager.api.adapters.session_share.adapter import SessionShareAdapter
 from ai.backend.manager.api.adapters.storage_host.adapter import StorageHostAdapter
 from ai.backend.manager.api.adapters.storage_namespace.adapter import StorageNamespaceAdapter
 from ai.backend.manager.api.adapters.user.adapter import UserAdapter
@@ -126,6 +127,7 @@ class Adapters:
         scheduling_history: SchedulingHistoryAdapter,
         service_catalog: ServiceCatalogAdapter,
         session: SessionAdapter,
+        session_share: SessionShareAdapter,
         storage_host: StorageHostAdapter,
         storage_namespace: StorageNamespaceAdapter,
         user: UserAdapter,
@@ -173,6 +175,7 @@ class Adapters:
         self.scheduling_history = scheduling_history
         self.service_catalog = service_catalog
         self.session = session
+        self.session_share = session_share
         self.storage_host = storage_host
         self.storage_namespace = storage_namespace
         self.user = user
@@ -241,6 +244,7 @@ class Adapters:
             scheduling_history=SchedulingHistoryAdapter(processors),
             service_catalog=ServiceCatalogAdapter(processors),
             session=SessionAdapter(processors),
+            session_share=SessionShareAdapter(processors),
             storage_host=StorageHostAdapter(processors),
             storage_namespace=StorageNamespaceAdapter(processors),
             user=UserAdapter(processors, auth_config),

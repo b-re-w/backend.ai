@@ -132,6 +132,7 @@ async def proxy(
                     params.app,
                     params.open_to_public,
                     params.allowed_client_ips,
+                    user_id=token.user_uuid,
                 )
             except ObjectNotFound:
                 existing_circuit = None

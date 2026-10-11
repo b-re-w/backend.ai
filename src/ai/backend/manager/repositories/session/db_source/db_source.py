@@ -10,6 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload, load_only, noload, selectinload
 from sqlalchemy.orm.strategy_options import _AbstractLoad
 
+from ai.backend.common.data.permission.types import EntityType as RBACEntityType
+from ai.backend.common.data.permission.types import ScopeType as RBACScopeType
 from ai.backend.common.docker import ImageRef
 from ai.backend.common.identifier.session import SessionID
 from ai.backend.common.types import (
@@ -28,6 +30,11 @@ from ai.backend.manager.data.session.types import (
     SessionListResult,
     SessionRoutingInfo,
 )
+from ai.backend.manager.data.session_share.types import (
+    SESSION_SHARE_DEAD_STATUSES,
+    SESSION_SHARE_OPERATIONS,
+    SessionShareGrant,
+)
 from ai.backend.manager.data.user.types import SessionOwnerContext, UserData
 from ai.backend.manager.defs import DEFAULT_ROLE
 from ai.backend.manager.errors.common import GenericBadRequest
@@ -42,6 +49,8 @@ from ai.backend.manager.models.group import groups
 from ai.backend.manager.models.image import ImageRow
 from ai.backend.manager.models.kernel import KernelRow
 from ai.backend.manager.models.keypair import KeyPairRow
+from ai.backend.manager.models.rbac_models.permission.permission import PermissionRow
+from ai.backend.manager.models.rbac_models.user_role import UserRoleRow
 from ai.backend.manager.models.resource_policy import KeyPairResourcePolicyRow
 from ai.backend.manager.models.resource_slot import ResourceAllocationRow
 from ai.backend.manager.models.scaling_group import scaling_groups
@@ -75,6 +84,42 @@ class SessionDBSource:
     def __init__(self, db: ExtendedAsyncSAEngine) -> None:
         self._db = db
         self._ops = DBOpsProvider(db)
+
+    async def get_session_share_grant(
+        self, session_id: SessionId, user_id: uuid.UUID
+    ) -> SessionShareGrant:
+        """Operations a live share grants the user on the session (BEP-1073)."""
+        async with self._db.begin_readonly_session_read_committed() as db_sess:
+            session_row = (
+                await db_sess.execute(
+                    sa.select(SessionRow.access_key, SessionRow.status).where(
+                        SessionRow.id == session_id
+                    )
+                )
+            ).first()
+            if session_row is None or session_row.status in SESSION_SHARE_DEAD_STATUSES:
+                return SessionShareGrant(frozenset(), None, None)
+            operations = (
+                await db_sess.scalars(
+                    sa.select(PermissionRow.operation)
+                    .join(UserRoleRow, UserRoleRow.role_id == PermissionRow.role_id)
+                    .where(
+                        UserRoleRow.user_id == user_id,
+                        PermissionRow.scope_type == RBACScopeType.SESSION,
+                        PermissionRow.scope_id == str(session_id),
+                        PermissionRow.entity_type == RBACEntityType.SESSION,
+                        PermissionRow.operation.in_(SESSION_SHARE_OPERATIONS),
+                    )
+                )
+            ).all()
+            invitee_access_key = await db_sess.scalar(
+                sa.select(UserRow.main_access_key).where(UserRow.uuid == user_id)
+            )
+        return SessionShareGrant(
+            operations=frozenset(operations),
+            owner_access_key=session_row.access_key,
+            invitee_access_key=invitee_access_key,
+        )
 
     async def resolve_session_id(
         self,
