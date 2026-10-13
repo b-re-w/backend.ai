@@ -461,6 +461,7 @@ def create_services(args: ServiceArgs) -> Services:
             registry=args.agent_registry,
             valkey_live=args.valkey_live,
             etcd=args.etcd,
+            session_share_repository=repositories.session_share.repository,
         ),
         events=EventsService(
             repository=repositories.events.repository,

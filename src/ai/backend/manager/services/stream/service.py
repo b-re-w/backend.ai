@@ -7,12 +7,16 @@ from typing import Final
 
 from ai.backend.common import validators as tx
 from ai.backend.common.clients.valkey_client.valkey_live.client import ValkeyLiveClient
+from ai.backend.common.data.permission.types import OperationType
 from ai.backend.common.etcd import AsyncEtcd
 from ai.backend.common.types import AgentId, KernelId, SessionId
 from ai.backend.logging import BraceStyleAdapter
 from ai.backend.manager.errors.api import NotImplementedAPI
+from ai.backend.manager.errors.kernel import SessionNotFound
 from ai.backend.manager.errors.resource import AgentNotAllocated
+from ai.backend.manager.models.session import SessionRow
 from ai.backend.manager.registry import AgentRegistry
+from ai.backend.manager.repositories.session_share.repository import SessionShareRepository
 from ai.backend.manager.repositories.stream.repository import StreamRepository
 from ai.backend.manager.services.stream.actions.execute_in_stream import (
     ExecuteInStreamAction,
@@ -55,6 +59,7 @@ class StreamService:
     _registry: AgentRegistry
     _valkey_live: ValkeyLiveClient
     _etcd: AsyncEtcd
+    _session_share_repository: SessionShareRepository | None
 
     def __init__(
         self,
@@ -62,18 +67,23 @@ class StreamService:
         registry: AgentRegistry,
         valkey_live: ValkeyLiveClient,
         etcd: AsyncEtcd,
+        session_share_repository: SessionShareRepository | None = None,
     ) -> None:
         self._repository = repository
         self._registry = registry
         self._valkey_live = valkey_live
         self._etcd = etcd
+        self._session_share_repository = session_share_repository
 
     async def get_streaming_session(
         self, action: GetStreamingSessionAction
     ) -> GetStreamingSessionActionResult:
-        session = await self._repository.get_streaming_session(
-            action.session_name, action.user_uuid
-        )
+        try:
+            session = await self._repository.get_streaming_session(
+                action.session_name, action.user_uuid
+            )
+        except SessionNotFound:
+            session = await self._shared_streaming_session(action)
         kernel = session.main_kernel
         return GetStreamingSessionActionResult(
             session_id=session.id,
@@ -84,6 +94,21 @@ class StreamService:
             repl_out_port=kernel.repl_out_port,
             service_ports=kernel.service_ports or [],
         )
+
+    async def _shared_streaming_session(self, action: GetStreamingSessionAction) -> SessionRow:
+        """
+        A session shared with the user at the app level (BEP-1073): the desktop app opens
+        session apps through this stream proxy instead of the App Proxy, so an invitee must
+        reach it here too. Anything else stays "not found" so a share never leaks a session.
+        """
+        if action.session_id is None or self._session_share_repository is None:
+            raise SessionNotFound(f"Session (name={action.session_name}) does not exist.")
+        operations = await self._session_share_repository.shared_operations(
+            action.user_uuid, action.session_id
+        )
+        if OperationType.CREATE not in operations:
+            raise SessionNotFound(f"Session (name={action.session_name}) does not exist.")
+        return await self._repository.get_streaming_session_by_id(action.session_id)
 
     async def execute_in_stream(self, action: ExecuteInStreamAction) -> ExecuteInStreamActionResult:
         session = await self._repository.get_streaming_session(

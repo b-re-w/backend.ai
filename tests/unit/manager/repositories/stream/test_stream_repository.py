@@ -518,3 +518,35 @@ class TestStreamRepository:
     ) -> None:
         with pytest.raises(SessionNotFound):
             await repository.get_streaming_session("no-such-session", stream_session.user_uuid)
+
+    async def test_by_id_returns_the_running_session_whoever_asks(
+        self,
+        repository: StreamRepository,
+        stream_session: StreamSessionFixture,
+    ) -> None:
+        session = await repository.get_streaming_session_by_id(stream_session.session_id)
+
+        assert session.id == stream_session.session_id
+        assert session.main_kernel.id == stream_session.main_kernel_id
+
+    async def test_by_id_ignores_terminated_session(
+        self,
+        repository: StreamRepository,
+        db_with_cleanup: ExtendedAsyncSAEngine,
+        stream_session: StreamSessionFixture,
+    ) -> None:
+        async with db_with_cleanup.begin_session() as db_sess:
+            session = await db_sess.get(SessionRow, stream_session.session_id)
+            assert session is not None
+            session.status = SessionStatus.TERMINATED
+
+        with pytest.raises(SessionNotFound):
+            await repository.get_streaming_session_by_id(stream_session.session_id)
+
+    async def test_by_id_not_found_for_unknown_id(
+        self,
+        repository: StreamRepository,
+        stream_session: StreamSessionFixture,
+    ) -> None:
+        with pytest.raises(SessionNotFound):
+            await repository.get_streaming_session_by_id(SessionId(uuid.uuid4()))

@@ -1,5 +1,6 @@
 import uuid
 
+from ai.backend.common.types import SessionId
 from ai.backend.manager.models.session import SessionRow
 from ai.backend.manager.models.utils import ExtendedAsyncSAEngine
 from ai.backend.manager.repositories.stream.db_source.db_source import StreamDBSource
@@ -17,3 +18,6 @@ class StreamRepository:
         user_uuid: uuid.UUID,
     ) -> SessionRow:
         return await self._db_source.get_streaming_session(session_name, user_uuid)
+
+    async def get_streaming_session_by_id(self, session_id: SessionId) -> SessionRow:
+        return await self._db_source.get_streaming_session_by_id(session_id)

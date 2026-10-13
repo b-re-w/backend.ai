@@ -14,6 +14,9 @@ from ai.backend.manager.services.stream.actions.base import StreamAction
 class GetStreamingSessionAction(StreamAction):
     session_name: str
     user_uuid: uuid.UUID
+    # Set when the caller referenced the session by id; lets a session shared with the user
+    # (BEP-1073) be found, since shared sessions cannot be looked up by name.
+    session_id: SessionId | None = None
 
     @override
     def entity_id(self) -> str | None:

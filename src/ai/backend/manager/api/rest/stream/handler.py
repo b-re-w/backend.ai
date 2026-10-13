@@ -76,6 +76,13 @@ if TYPE_CHECKING:
 log: Final = BraceStyleAdapter(logging.getLogger(__spec__.name))
 
 
+def _session_id_or_none(session_name_or_id: str) -> SessionId | None:
+    try:
+        return SessionId(uuid.UUID(session_name_or_id))
+    except (ValueError, TypeError):
+        return None
+
+
 def _require_current_user_id() -> uuid.UUID:
     user = current_user()
     if user is None:
@@ -462,7 +469,12 @@ class StreamHandler:
         if myself is None:
             raise NoCurrentTaskContext("No current task context")
         session_result = await self._stream.get_streaming_session.wait_for_complete(
-            GetStreamingSessionAction(session_name=session_name, user_uuid=user_id),
+            GetStreamingSessionAction(
+                session_name=session_name,
+                user_uuid=user_id,
+                # A session referenced by id may be one shared with the user (BEP-1073).
+                session_id=_session_id_or_none(session_name_or_id),
+            ),
         )
         kernel_id = session_result.kernel_id
         session_id = session_result.session_id

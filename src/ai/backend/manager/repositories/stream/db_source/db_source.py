@@ -3,6 +3,7 @@ import uuid
 import sqlalchemy as sa
 from sqlalchemy.orm import joinedload, noload, selectinload
 
+from ai.backend.common.types import SessionId
 from ai.backend.manager.data.session.types import SessionStatus
 from ai.backend.manager.errors.kernel import SessionNotFound, TooManySessionsMatched
 from ai.backend.manager.models.kernel import KernelRow
@@ -22,22 +23,10 @@ class StreamDBSource:
         user_uuid: uuid.UUID,
     ) -> SessionRow:
         async with self._db.begin_readonly_session() as db_sess:
-            query = (
-                sa.select(SessionRow)
-                .where(
-                    (SessionRow.name == session_name)
-                    & (SessionRow.user_uuid == user_uuid)
-                    & (SessionRow.status == SessionStatus.RUNNING)
-                )
-                .options(
-                    noload("*"),
-                    selectinload(SessionRow.kernels).options(
-                        noload("*"),
-                        selectinload(KernelRow.agent_row).noload("*"),
-                    ),
-                    joinedload(SessionRow.user),
-                )
-                .execution_options(populate_existing=True)
+            query = self._streaming_session_query().where(
+                (SessionRow.name == session_name)
+                & (SessionRow.user_uuid == user_uuid)
+                & (SessionRow.status == SessionStatus.RUNNING)
             )
             result = await db_sess.execute(query)
             sessions = result.scalars().all()
@@ -55,3 +44,29 @@ class StreamDBSource:
                 ]
                 raise TooManySessionsMatched(extra_data={"matches": session_infos})
             return sessions[0]
+
+    async def get_streaming_session_by_id(self, session_id: SessionId) -> SessionRow:
+        """A running session by id, whoever owns it; callers check access (BEP-1073 shares)."""
+        async with self._db.begin_readonly_session() as db_sess:
+            query = self._streaming_session_query().where(
+                (SessionRow.id == session_id) & (SessionRow.status == SessionStatus.RUNNING)
+            )
+            session = (await db_sess.execute(query)).scalars().first()
+            if session is None:
+                raise SessionNotFound(f"Session (id={session_id}) does not exist.")
+            return session
+
+    @staticmethod
+    def _streaming_session_query() -> sa.Select[tuple[SessionRow]]:
+        return (
+            sa.select(SessionRow)
+            .options(
+                noload("*"),
+                selectinload(SessionRow.kernels).options(
+                    noload("*"),
+                    selectinload(KernelRow.agent_row).noload("*"),
+                ),
+                joinedload(SessionRow.user),
+            )
+            .execution_options(populate_existing=True)
+        )

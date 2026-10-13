@@ -6,11 +6,13 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from ai.backend.common.clients.valkey_client.valkey_live.client import ValkeyLiveClient
+from ai.backend.common.data.permission.types import OperationType
 from ai.backend.common.etcd import AsyncEtcd
 from ai.backend.common.types import KernelId, SessionId
 from ai.backend.manager.errors.kernel import SessionNotFound
 from ai.backend.manager.models.session.row import SessionRow
 from ai.backend.manager.registry import AgentRegistry
+from ai.backend.manager.repositories.session_share.repository import SessionShareRepository
 from ai.backend.manager.repositories.stream.repository import StreamRepository
 from ai.backend.manager.services.stream.actions.execute_in_stream import (
     ExecuteInStreamAction,
@@ -151,6 +153,99 @@ class TestGetStreamingSession(TestStreamService):
 
         with pytest.raises(SessionNotFound):
             await stream_service.get_streaming_session(action)
+
+
+class TestGetSharedStreamingSession(TestStreamService):
+    """The desktop app opens session apps through the stream proxy (BEP-1073 shares)."""
+
+    @pytest.fixture
+    def mock_share_repository(self) -> AsyncMock:
+        repo = AsyncMock(spec=SessionShareRepository)
+        repo.shared_operations.return_value = frozenset({OperationType.READ, OperationType.CREATE})
+        return repo
+
+    @pytest.fixture
+    def sharing_service(
+        self,
+        mock_repository: AsyncMock,
+        mock_registry: AsyncMock,
+        mock_valkey_live: AsyncMock,
+        mock_etcd: AsyncMock,
+        mock_share_repository: AsyncMock,
+    ) -> StreamService:
+        return StreamService(
+            repository=mock_repository,
+            registry=mock_registry,
+            valkey_live=mock_valkey_live,
+            etcd=mock_etcd,
+            session_share_repository=mock_share_repository,
+        )
+
+    @pytest.fixture
+    def not_owner(self, mock_repository: AsyncMock) -> AsyncMock:
+        mock_repository.get_streaming_session.side_effect = SessionNotFound()
+        return mock_repository
+
+    async def test_owner_does_not_need_a_share(
+        self,
+        sharing_service: StreamService,
+        mock_repository: AsyncMock,
+        mock_share_repository: AsyncMock,
+        mock_session: MagicMock,
+    ) -> None:
+        mock_repository.get_streaming_session.return_value = mock_session
+        action = GetStreamingSessionAction(
+            session_name="my-session", user_uuid=FAKE_USER_UUID, session_id=FAKE_SESSION_ID
+        )
+
+        result = await sharing_service.get_streaming_session(action)
+
+        assert result.session_id == FAKE_SESSION_ID
+        mock_share_repository.shared_operations.assert_not_awaited()
+
+    async def test_invitee_with_an_app_share_gets_the_session(
+        self,
+        sharing_service: StreamService,
+        not_owner: AsyncMock,
+        mock_session: MagicMock,
+    ) -> None:
+        not_owner.get_streaming_session_by_id.return_value = mock_session
+        action = GetStreamingSessionAction(
+            session_name="their-session", user_uuid=FAKE_USER_UUID, session_id=FAKE_SESSION_ID
+        )
+
+        result = await sharing_service.get_streaming_session(action)
+
+        assert result.session_id == FAKE_SESSION_ID
+        assert result.kernel_id == FAKE_KERNEL_ID
+        not_owner.get_streaming_session_by_id.assert_awaited_once_with(FAKE_SESSION_ID)
+
+    async def test_user_without_an_app_share_gets_not_found(
+        self,
+        sharing_service: StreamService,
+        not_owner: AsyncMock,
+        mock_share_repository: AsyncMock,
+    ) -> None:
+        mock_share_repository.shared_operations.return_value = frozenset({OperationType.READ})
+        action = GetStreamingSessionAction(
+            session_name="their-session", user_uuid=FAKE_USER_UUID, session_id=FAKE_SESSION_ID
+        )
+
+        with pytest.raises(SessionNotFound):
+            await sharing_service.get_streaming_session(action)
+        not_owner.get_streaming_session_by_id.assert_not_awaited()
+
+    async def test_a_session_named_instead_of_identified_is_not_looked_up_through_shares(
+        self,
+        sharing_service: StreamService,
+        not_owner: AsyncMock,
+        mock_share_repository: AsyncMock,
+    ) -> None:
+        action = GetStreamingSessionAction(session_name="their-session", user_uuid=FAKE_USER_UUID)
+
+        with pytest.raises(SessionNotFound):
+            await sharing_service.get_streaming_session(action)
+        mock_share_repository.shared_operations.assert_not_awaited()
 
 
 class TestExecuteInStream(TestStreamService):
