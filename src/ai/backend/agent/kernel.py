@@ -917,12 +917,12 @@ class AbstractCodeRunner(aobject, metaclass=ABCMeta):
     async def feed_and_get_status(self) -> dict[str, float] | None:
         sock = await self._get_socket_pair()
         await sock.send_multipart([b"status", b""])
-        try:
-            result = await self.status_queue.get()
-            self.status_queue.task_done()
-            return cast(dict[str, float] | None, msgpack.unpackb(result))
-        except asyncio.CancelledError:
-            return None
+        # Cancellation must propagate: create_kernel() polls this while it waits for the kernel
+        # runner, and terminating the kernel cancels that wait. Swallowing it here left the wait
+        # polling a dead container, and the clean handler waiting for it under registry_lock.
+        result = await self.status_queue.get()
+        self.status_queue.task_done()
+        return cast(dict[str, float] | None, msgpack.unpackb(result))
 
     async def feed_and_get_completion(
         self, code_text: str, opts: Mapping[str, Any]

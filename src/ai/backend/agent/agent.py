@@ -296,6 +296,8 @@ DEAD_STATUS_SET = ContainerStatus.dead_set()
 COMMIT_STATUS_EXPIRE: Final[int] = 13
 EVENT_DISPATCHER_CONSUMER_GROUP: Final = "agent"
 STAT_COLLECTION_TIMEOUT: Final[float] = 10 * 60  # 10 minutes
+# How long a terminated kernel's pending creation task may take to stop after cancellation.
+PENDING_CREATION_CANCEL_TIMEOUT: Final[float] = 10.0
 
 P = ParamSpec("P")
 KernelIdContainerPair = tuple[KernelId, Container]
@@ -1187,10 +1189,16 @@ class AbstractAgent[
                 for t in set(pending_creation_tasks):
                     if not t.done() and not t.cancelled():
                         t.cancel()
-                        try:
-                            await t
-                        except asyncio.CancelledError:
-                            continue
+                        # Bounded, and without re-raising the task's own error: the caller may
+                        # hold registry_lock, so a creation task that does not stop must not
+                        # keep this kernel's termination (and every other kernel) waiting.
+                        done, _ = await asyncio.wait({t}, timeout=PENDING_CREATION_CANCEL_TIMEOUT)
+                        if not done:
+                            log.warning(
+                                "creation task of kernel {} did not stop within {}s of cancellation",
+                                event.kernel_id,
+                                PENDING_CREATION_CANCEL_TIMEOUT,
+                            )
         if isinstance(event, (KernelStartedAnycastEvent, KernelTerminatedAnycastEvent)):
             await self.save_last_registry()
 
