@@ -593,6 +593,7 @@ class StreamHandler:
                     user_uuid=user_id,
                     service=service,
                     opts=opts,
+                    session_id=_session_id_or_none(session_name_or_id),
                 ),
             )
             if start_result.result.get("status") == "failed":
@@ -635,7 +636,11 @@ class StreamHandler:
         session_name_or_id = path.parsed.session_name
         session_name = await self._resolve_session_name(session_name_or_id)
         result = await self._stream.get_streaming_session.wait_for_complete(
-            GetStreamingSessionAction(session_name=session_name, user_uuid=user_id),
+            GetStreamingSessionAction(
+                session_name=session_name,
+                user_uuid=user_id,
+                session_id=_session_id_or_none(session_name_or_id),
+            ),
         )
         service_ports: list[dict[str, Any]] = result.service_ports
         if not service_ports:

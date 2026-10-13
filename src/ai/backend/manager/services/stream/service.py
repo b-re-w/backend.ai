@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import uuid
 from collections.abc import Awaitable, Callable
 from datetime import timedelta
 from typing import Final
@@ -78,12 +79,9 @@ class StreamService:
     async def get_streaming_session(
         self, action: GetStreamingSessionAction
     ) -> GetStreamingSessionActionResult:
-        try:
-            session = await self._repository.get_streaming_session(
-                action.session_name, action.user_uuid
-            )
-        except SessionNotFound:
-            session = await self._shared_streaming_session(action)
+        session = await self._streaming_session(
+            action.session_name, action.user_uuid, action.session_id
+        )
         kernel = session.main_kernel
         return GetStreamingSessionActionResult(
             session_id=session.id,
@@ -95,20 +93,26 @@ class StreamService:
             service_ports=kernel.service_ports or [],
         )
 
-    async def _shared_streaming_session(self, action: GetStreamingSessionAction) -> SessionRow:
+    async def _streaming_session(
+        self, session_name: str, user_uuid: uuid.UUID, session_id: SessionId | None
+    ) -> SessionRow:
         """
-        A session shared with the user at the app level (BEP-1073): the desktop app opens
-        session apps through this stream proxy instead of the App Proxy, so an invitee must
-        reach it here too. Anything else stays "not found" so a share never leaks a session.
+        The user's own running session, or one shared with them at the app level (BEP-1073):
+        the desktop app opens session apps through this stream proxy instead of the App
+        Proxy, so an invitee must reach it here too. A session referenced by name, or
+        without that share, stays "not found" so a share never leaks a session.
         """
-        if action.session_id is None or self._session_share_repository is None:
-            raise SessionNotFound(f"Session (name={action.session_name}) does not exist.")
-        operations = await self._session_share_repository.shared_operations(
-            action.user_uuid, action.session_id
-        )
-        if OperationType.CREATE not in operations:
-            raise SessionNotFound(f"Session (name={action.session_name}) does not exist.")
-        return await self._repository.get_streaming_session_by_id(action.session_id)
+        try:
+            return await self._repository.get_streaming_session(session_name, user_uuid)
+        except SessionNotFound:
+            if session_id is None or self._session_share_repository is None:
+                raise
+            operations = await self._session_share_repository.shared_operations(
+                user_uuid, session_id
+            )
+            if OperationType.CREATE not in operations:
+                raise
+        return await self._repository.get_streaming_session_by_id(session_id)
 
     async def execute_in_stream(self, action: ExecuteInStreamAction) -> ExecuteInStreamActionResult:
         session = await self._repository.get_streaming_session(
@@ -145,8 +149,8 @@ class StreamService:
     async def start_service_in_stream(
         self, action: StartServiceInStreamAction
     ) -> StartServiceInStreamActionResult:
-        session = await self._repository.get_streaming_session(
-            action.session_name, action.user_uuid
+        session = await self._streaming_session(
+            action.session_name, action.user_uuid, action.session_id
         )
         main_kernel = session.main_kernel
         if main_kernel.agent is None:

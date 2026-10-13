@@ -4,6 +4,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, override
 
+from ai.backend.common.types import SessionId
 from ai.backend.manager.actions.action import BaseActionResult
 from ai.backend.manager.actions.types import ActionOperationType
 from ai.backend.manager.services.stream.actions.base import StreamAction
@@ -15,6 +16,9 @@ class StartServiceInStreamAction(StreamAction):
     user_uuid: uuid.UUID
     service: str
     opts: dict[str, Any] = field(default_factory=dict)
+    # Set when the caller referenced the session by id: a session shared with the user
+    # (BEP-1073) can start its apps for the invitee too.
+    session_id: SessionId | None = None
 
     @override
     def entity_id(self) -> str | None:

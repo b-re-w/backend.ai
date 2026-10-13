@@ -235,6 +235,47 @@ class TestGetSharedStreamingSession(TestStreamService):
             await sharing_service.get_streaming_session(action)
         not_owner.get_streaming_session_by_id.assert_not_awaited()
 
+    async def test_invitee_with_an_app_share_can_start_the_app(
+        self,
+        sharing_service: StreamService,
+        not_owner: AsyncMock,
+        mock_registry: AsyncMock,
+        mock_session: MagicMock,
+    ) -> None:
+        mock_session.main_kernel.agent = "agent1"
+        not_owner.get_streaming_session_by_id.return_value = mock_session
+        mock_registry.start_service.return_value = {"status": "started"}
+        action = StartServiceInStreamAction(
+            session_name="their-session",
+            user_uuid=FAKE_USER_UUID,
+            service="vscode",
+            session_id=FAKE_SESSION_ID,
+        )
+
+        result = await sharing_service.start_service_in_stream(action)
+
+        assert result.result == {"status": "started"}
+        mock_registry.start_service.assert_awaited_once()
+
+    async def test_user_without_an_app_share_cannot_start_the_app(
+        self,
+        sharing_service: StreamService,
+        not_owner: AsyncMock,
+        mock_registry: AsyncMock,
+        mock_share_repository: AsyncMock,
+    ) -> None:
+        mock_share_repository.shared_operations.return_value = frozenset()
+        action = StartServiceInStreamAction(
+            session_name="their-session",
+            user_uuid=FAKE_USER_UUID,
+            service="vscode",
+            session_id=FAKE_SESSION_ID,
+        )
+
+        with pytest.raises(SessionNotFound):
+            await sharing_service.start_service_in_stream(action)
+        mock_registry.start_service.assert_not_awaited()
+
     async def test_a_session_named_instead_of_identified_is_not_looked_up_through_shares(
         self,
         sharing_service: StreamService,
