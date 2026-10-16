@@ -384,3 +384,18 @@ class InvalidKernelStatus(BackendAIError, web.HTTPConflict):
             operation=ErrorOperation.UPDATE,
             error_detail=ErrorDetail.CONFLICT,
         )
+
+
+class SessionAdminRenameDisabled(BackendAIError, web.HTTPForbidden):
+    """An admin tried to rename another user's session while that is turned off."""
+
+    error_type = "https://api.backend.ai/probs/session-admin-rename-disabled"
+    error_title = "Renaming other users' sessions is turned off (session.allow-admin-rename)."
+
+    @override
+    def error_code(self) -> ErrorCode:
+        return ErrorCode(
+            domain=ErrorDomain.SESSION,
+            operation=ErrorOperation.UPDATE,
+            error_detail=ErrorDetail.FORBIDDEN,
+        )

@@ -253,6 +253,20 @@ class SessionDBSource:
             template_info = result.fetchone()
             return dict(template_info._mapping) if template_info else None
 
+    async def get_session_access_scope(self, session_id: SessionId) -> tuple[AccessKey, str] | None:
+        """The session's access key and domain, or None if there is no such session."""
+        async with self._db.begin_readonly_session_read_committed() as db_sess:
+            row = (
+                await db_sess.execute(
+                    sa.select(SessionRow.access_key, SessionRow.domain_name).where(
+                        SessionRow.id == session_id
+                    )
+                )
+            ).first()
+        if row is None or row.access_key is None:
+            return None
+        return AccessKey(row.access_key), row.domain_name
+
     async def update_session_name(
         self,
         session_name_or_id: str | SessionId,

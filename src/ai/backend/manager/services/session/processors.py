@@ -83,6 +83,10 @@ from ai.backend.manager.services.session.actions.get_direct_access_info import (
     GetDirectAccessInfoAction,
     GetDirectAccessInfoActionResult,
 )
+from ai.backend.manager.services.session.actions.get_rename_policy import (
+    GetSessionRenamePolicyAction,
+    GetSessionRenamePolicyActionResult,
+)
 from ai.backend.manager.services.session.actions.get_session import (
     GetSessionAction,
     GetSessionActionResult,
@@ -184,6 +188,9 @@ class SessionProcessors(AbstractProcessorPackage):
     ]
     get_session_info: ActionProcessor[GetSessionInfoAction, GetSessionInfoActionResult]
     get_status_history: ActionProcessor[GetStatusHistoryAction, GetStatusHistoryActionResult]
+    get_rename_policy: ActionProcessor[
+        GetSessionRenamePolicyAction, GetSessionRenamePolicyActionResult
+    ]
     interrupt: ActionProcessor[InterruptSessionAction, InterruptSessionActionResult]
     list_files: ActionProcessor[ListFilesAction, ListFilesActionResult]
     match_sessions: ActionProcessor[MatchSessionsAction, MatchSessionsActionResult]
@@ -234,6 +241,7 @@ class SessionProcessors(AbstractProcessorPackage):
             service.get_direct_access_info, action_monitors
         )
         self.get_status_history = ActionProcessor(service.get_status_history, action_monitors)
+        self.get_rename_policy = ActionProcessor(service.get_rename_policy, action_monitors)
         self.interrupt = ActionProcessor(service.interrupt, action_monitors)
         self.list_files = ActionProcessor(service.list_files, action_monitors)
         self.rename_session = ActionProcessor(service.rename_session, action_monitors)
@@ -342,6 +350,7 @@ class SessionProcessors(AbstractProcessorPackage):
             GetDirectAccessInfoAction.spec(),
             GetSessionInfoAction.spec(),
             GetStatusHistoryAction.spec(),
+            GetSessionRenamePolicyAction.spec(),
             InterruptSessionAction.spec(),
             ListFilesAction.spec(),
             MatchSessionsAction.spec(),

@@ -2108,6 +2108,23 @@ class SessionConfig(BaseConfigSchema):
             composite=CompositeType.FIELD,
         ),
     ]
+    allow_admin_rename: Annotated[
+        bool,
+        Field(
+            default=False,
+            validation_alias=AliasChoices("allow_admin_rename", "allow-admin-rename"),
+            serialization_alias="allow-admin-rename",
+        ),
+        BackendAIConfigMeta(
+            description=(
+                "Whether admins may rename sessions owned by other users: superadmins any "
+                "session, domain admins the sessions in their domain. Off unless set to true; "
+                "owners can always rename their own sessions."
+            ),
+            added_version="26.8.3",
+            example=ConfigExample(local="false", prod="false"),
+        ),
+    ]
 
 
 class MetricConfig(BaseConfigSchema):

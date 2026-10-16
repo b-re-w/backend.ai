@@ -53,6 +53,7 @@ from ai.backend.logging.utils import BraceStyleAdapter
 from ai.backend.manager.bgtask.tasks.commit_session import CommitSessionManifest
 from ai.backend.manager.bgtask.types import ManagerBgtaskName
 from ai.backend.manager.clients.appproxy.client import AppProxyClientPool
+from ai.backend.manager.config.provider import ManagerConfigProvider
 from ai.backend.manager.data.common.sentinel import undefined
 from ai.backend.manager.data.image.types import ImageIdentifier
 from ai.backend.manager.data.session.draft import (
@@ -84,6 +85,7 @@ from ai.backend.manager.errors.kernel import (
     InvalidSessionData,
     KernelNotReady,
     QuotaExceeded,
+    SessionAdminRenameDisabled,
     SessionAlreadyExists,
     SessionNotFound,
     TooManySessionsMatched,
@@ -185,6 +187,10 @@ from ai.backend.manager.services.session.actions.get_direct_access_info import (
     GetDirectAccessInfoAction,
     GetDirectAccessInfoActionResult,
 )
+from ai.backend.manager.services.session.actions.get_rename_policy import (
+    GetSessionRenamePolicyAction,
+    GetSessionRenamePolicyActionResult,
+)
 from ai.backend.manager.services.session.actions.get_session import (
     GetSessionAction,
     GetSessionActionResult,
@@ -278,6 +284,8 @@ class SessionServiceArgs:
     scheduling_controller: SchedulingController
     appproxy_client_pool: AppProxyClientPool
     user_repository: UserRepository
+    # Source of ``session.allow-admin-rename`` (read on each use, so etcd changes apply live).
+    config_provider: ManagerConfigProvider | None = None
 
 
 def _session_id_or_none(session_name_or_id: str) -> SessionId | None:
@@ -300,6 +308,7 @@ class SessionService:
     _user_repository: UserRepository
     _scheduling_controller: SchedulingController
     _appproxy_client_pool: AppProxyClientPool
+    _config_provider: ManagerConfigProvider | None
     _database_ptask_group: aiotools.PersistentTaskGroup
     _rpc_ptask_group: aiotools.PersistentTaskGroup
 
@@ -318,6 +327,7 @@ class SessionService:
         self._user_repository = args.user_repository
         self._scheduling_controller = args.scheduling_controller
         self._appproxy_client_pool = args.appproxy_client_pool
+        self._config_provider = args.config_provider
         self._database_ptask_group = aiotools.PersistentTaskGroup()
         self._rpc_ptask_group = aiotools.PersistentTaskGroup()
         self._webhook_ptask_group = aiotools.PersistentTaskGroup()
@@ -1388,10 +1398,52 @@ class SessionService:
             )
         return MatchSessionsActionResult(result=matches)
 
+    def _admin_rename_enabled(self) -> bool:
+        if self._config_provider is None:
+            return False
+        return self._config_provider.config.session.allow_admin_rename is True
+
+    async def get_rename_policy(
+        self, action: GetSessionRenamePolicyAction
+    ) -> GetSessionRenamePolicyActionResult:
+        return GetSessionRenamePolicyActionResult(admin_rename_enabled=self._admin_rename_enabled())
+
+    async def _rename_owner_access_key(
+        self, session_name: str, owner_access_key: AccessKey
+    ) -> AccessKey:
+        """
+        The access key the session is renamed under: the requester's own session, or, for an
+        admin with ``session.allow-admin-rename`` on, another user's session given by id
+        (superadmins any, domain admins those in their domain). Others get "not found".
+        """
+        try:
+            await self._session_repository.get_session_validated(
+                session_name, owner_access_key, kernel_loading_strategy=KernelLoadingStrategy.NONE
+            )
+            return owner_access_key
+        except SessionNotFound:
+            me = current_user()
+            session_id = _session_id_or_none(session_name)
+            if me is None or session_id is None or not (me.is_superadmin or me.is_admin):
+                raise
+            owner = await self._session_repository.get_session_access_scope(session_id)
+            if owner is None:
+                raise
+            session_access_key, session_domain = owner
+            if not me.is_superadmin and me.domain_name != session_domain:
+                raise
+            if not self._admin_rename_enabled():
+                raise SessionAdminRenameDisabled(
+                    f"Renaming session {session_id} of another user is turned off."
+                ) from None
+            return session_access_key
+
     async def rename_session(self, action: RenameSessionAction) -> RenameSessionActionResult:
         session_name = action.session_name
-        owner_access_key = action.owner_access_key
         new_name = action.new_name
+        owner_access_key = await self._rename_owner_access_key(
+            session_name, action.owner_access_key
+        )
 
         try:
             compute_session = await self._session_repository.update_session_name(

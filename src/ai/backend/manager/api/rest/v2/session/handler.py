@@ -184,6 +184,11 @@ class V2SessionHandler:
         )
         return APIResponse.build(status_code=HTTPStatus.OK, response_model=result)
 
+    async def get_rename_policy(self) -> APIResponse:
+        """Whether admins may rename other users' sessions."""
+        result = await self._adapter.get_rename_policy()
+        return APIResponse.build(status_code=HTTPStatus.OK, response_model=result)
+
     async def update(
         self,
         user_ctx: UserContext,

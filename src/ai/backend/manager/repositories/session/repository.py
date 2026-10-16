@@ -129,6 +129,11 @@ class SessionRepository:
         return await self._db_source.get_template_info_by_id(template_id)
 
     @session_repository_resilience.apply()
+    async def get_session_access_scope(self, session_id: SessionId) -> tuple[AccessKey, str] | None:
+        """The session's access key and domain, or None if there is no such session."""
+        return await self._db_source.get_session_access_scope(session_id)
+
+    @session_repository_resilience.apply()
     async def update_session_name(
         self,
         session_name_or_id: str | SessionId,

@@ -30,6 +30,7 @@ __all__ = (
     "SessionMetadataInfoGQLDTO",
     "SessionNetworkInfo",
     "SessionNode",
+    "SessionRenamePolicyPayload",
     "SessionResourceInfo",
     "SessionResourceInfoGQLDTO",
     "SessionRuntimeInfo",
@@ -284,6 +285,17 @@ class UpdateSessionPayload(BaseResponseModel):
     """Payload for session update."""
 
     session: SessionNode = Field(description="Updated session details.")
+
+
+class SessionRenamePolicyPayload(BaseResponseModel):
+    """Who may rename sessions besides their owners."""
+
+    admin_rename_enabled: bool = Field(
+        description=(
+            "Whether admins may rename other users' sessions (session.allow-admin-rename): "
+            "superadmins any session, domain admins those in their domain."
+        )
+    )
 
 
 # ---------------------------------------------------------------------------

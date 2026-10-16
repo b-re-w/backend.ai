@@ -585,6 +585,25 @@ class TestSessionRepository:
         with pytest.raises(SessionNotFound):
             await repository.get_session_with_routing_minimal(SessionID(terminated_id))
 
+    # =========================================================================
+    # Tests - get_session_access_scope
+    # =========================================================================
+
+    async def test_access_scope_returns_access_key_and_domain(
+        self,
+        repository: SessionRepository,
+        session_with_kernel: SessionTestData,
+    ) -> None:
+        scope = await repository.get_session_access_scope(session_with_kernel.session_id)
+
+        assert scope == (session_with_kernel.access_key, "test-domain")
+
+    async def test_access_scope_is_none_for_unknown_id(
+        self,
+        repository: SessionRepository,
+    ) -> None:
+        assert await repository.get_session_access_scope(SessionId(uuid.uuid4())) is None
+
 
 class TestBatchPopulateSessionOccupiedSlots:
     """Test batch_populate_session_occupied_slots computes occupied_slots

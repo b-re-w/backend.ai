@@ -64,6 +64,7 @@ from ai.backend.common.dto.manager.v2.session.response import (
     SessionMetadataInfoGQLDTO,
     SessionNetworkInfo,
     SessionNode,
+    SessionRenamePolicyPayload,
     SessionResourceInfoGQLDTO,
     SessionRuntimeInfoGQLDTO,
     StartSessionServicePayload,
@@ -149,6 +150,9 @@ from ai.backend.manager.services.session.actions.enqueue_session import (
 )
 from ai.backend.manager.services.session.actions.get_container_logs import (
     GetContainerLogsAction,
+)
+from ai.backend.manager.services.session.actions.get_rename_policy import (
+    GetSessionRenamePolicyAction,
 )
 from ai.backend.manager.services.session.actions.get_session import GetSessionAction
 from ai.backend.manager.services.session.actions.rename_session import RenameSessionAction
@@ -1056,6 +1060,13 @@ class SessionAdapter(BaseAdapter):
     # -------------------------------------------------------------------------
     # Update
     # -------------------------------------------------------------------------
+
+    async def get_rename_policy(self) -> SessionRenamePolicyPayload:
+        """Whether admins may rename other users' sessions."""
+        result = await self._processors.session.get_rename_policy.wait_for_complete(
+            GetSessionRenamePolicyAction()
+        )
+        return SessionRenamePolicyPayload(admin_rename_enabled=result.admin_rename_enabled)
 
     async def update(
         self,

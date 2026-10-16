@@ -110,5 +110,11 @@ def register_v2_session_routes(
         handler.update,
         middlewares=[auth_required],
     )
+    registry.add(
+        "GET",
+        "/policies/rename",
+        handler.get_rename_policy,
+        middlewares=[auth_required],
+    )
 
     return registry

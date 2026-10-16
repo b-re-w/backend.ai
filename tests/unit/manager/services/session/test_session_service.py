@@ -992,6 +992,7 @@ class TestRenameSession:
         mock_session = MagicMock()
         mock_session.status = SessionStatus.RUNNING
         mock_session.to_dataclass.return_value = sample_session_data
+        mock_session_repository.get_session_validated = AsyncMock()
         mock_session_repository.update_session_name = AsyncMock(return_value=mock_session)
 
         action = RenameSessionAction(
@@ -1017,6 +1018,7 @@ class TestRenameSession:
         """Test renaming non-running session raises error"""
         mock_session = MagicMock()
         mock_session.status = SessionStatus.PENDING  # Not running
+        mock_session_repository.get_session_validated = AsyncMock()
         mock_session_repository.update_session_name = AsyncMock(return_value=mock_session)
 
         action = RenameSessionAction(

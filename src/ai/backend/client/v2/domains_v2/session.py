@@ -22,6 +22,7 @@ from ai.backend.common.dto.manager.v2.session.response import (
     EnqueueSessionPayload,
     SessionLogsPayload,
     SessionNode,
+    SessionRenamePolicyPayload,
     StartSessionServicePayload,
     TerminateSessionsPayload,
     UpdateSessionPayload,
@@ -199,6 +200,14 @@ class V2SessionClient(BaseDomainClient):
             f"{_PATH}/{session_id}/logs",
             params=params if params else None,
             response_model=SessionLogsPayload,
+        )
+
+    async def get_rename_policy(self) -> SessionRenamePolicyPayload:
+        """Whether admins may rename other users' sessions."""
+        return await self._client.typed_request(
+            "GET",
+            f"{_PATH}/policies/rename",
+            response_model=SessionRenamePolicyPayload,
         )
 
     async def update(
