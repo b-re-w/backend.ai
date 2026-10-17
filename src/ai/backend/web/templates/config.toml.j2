@@ -36,6 +36,7 @@ enableImportFromHuggingFace = true
 {% toml_field "enableReservoir" config["service"]["enable-reservoir"] %}
 
 [resources]
+resourceGroupOrder = "primary,secondary,console"  # Lab: resource group order in selectors
 {% toml_field "openPortToPublic" config["resources"]["open-port-to-public"] %}
 {% toml_field "allowNonAuthTCP" config["resources"]["allow-non-auth-tcp"] %}
 {% toml_field "allowPreferredPort" config["resources"]["allow-preferred-port"] %}
