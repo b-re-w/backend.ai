@@ -1106,7 +1106,10 @@ class MemoryPlugin(AbstractComputePlugin):
             raise InvalidArgumentError(
                 f"Expected DiscretePropertyAllocMap, got {type(alloc_map).__name__}"
             )
-        memory_limit = container.backend_obj["HostConfig"]["Memory"]
+        host_config = container.backend_obj["HostConfig"]
+        # Spot containers have no hard limit (Memory == 0); their booked amount
+        # is the soft limit.
+        memory_limit = host_config["Memory"] or host_config.get("MemoryReservation") or 0
         alloc_map.apply_allocation({
             SlotName("mem"): {DeviceId("root"): memory_limit},
         })

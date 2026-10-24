@@ -2125,6 +2125,27 @@ class SessionConfig(BaseConfigSchema):
             example=ConfigExample(local="false", prod="false"),
         ),
     ]
+    spot_slot_suffix: Annotated[
+        str,
+        Field(
+            default="",
+            validation_alias=AliasChoices("spot_slot_suffix", "spot-slot-suffix"),
+            serialization_alias="spot-slot-suffix",
+        ),
+        BackendAIConfigMeta(
+            description=(
+                "Slot-name suffix that marks a spot session, for example '-spot.shares'. "
+                "A kernel that requests a positive amount of any slot ending with this suffix "
+                "does not reserve cpu and mem on its agent: the scheduler ignores those two "
+                "slots when placing it and does not count them in the agent's reserved/used "
+                "totals (they are served from a shared pool on the agent). The requested "
+                "amounts stay on the allocation rows, so quotas and the web UI are unchanged. "
+                "Empty (the default) disables the feature. Takes effect after a manager restart."
+            ),
+            added_version="26.8.3",
+            example=ConfigExample(local="", prod="-spot.shares"),
+        ),
+    ]
 
 
 class MetricConfig(BaseConfigSchema):

@@ -1922,6 +1922,63 @@ class ResourceConfig(BaseConfigSchema):
             example=ConfigExample(local="INTERLEAVED", prod="INTERLEAVED"),
         ),
     ]
+    spot_slot_suffix: Annotated[
+        str,
+        Field(
+            default="",
+            validation_alias=AliasChoices("spot-slot-suffix", "spot_slot_suffix"),
+            serialization_alias="spot-slot-suffix",
+        ),
+        BackendAIConfigMeta(
+            description=(
+                "Slot-name suffix that marks a spot kernel, for example '-spot.shares'. "
+                "Spot kernels take cpu and mem from a separate, overcommitted allocation map "
+                "(see spot-overcommit-factor) instead of the node's real one, and their "
+                "containers get soft CPU/memory limits (CpuShares, MemoryReservation) with the "
+                "highest OOM score instead of hard ones. Must match the manager's "
+                "[session] spot-slot-suffix. Empty (the default) disables the feature."
+            ),
+            added_version="26.8.3",
+            example=ConfigExample(local="", prod="-spot.shares"),
+        ),
+    ]
+    spot_overcommit_factor: Annotated[
+        int,
+        Field(
+            default=4,
+            ge=1,
+            validation_alias=AliasChoices("spot-overcommit-factor", "spot_overcommit_factor"),
+            serialization_alias="spot-overcommit-factor",
+        ),
+        BackendAIConfigMeta(
+            description=(
+                "How many times the node's CPU and memory the agent lets spot kernels book "
+                "in its own bookkeeping (per-core and total memory capacity are multiplied "
+                "by this). Only used when spot-slot-suffix is set. Containers are still "
+                "limited by the kernel scheduler, not by this number."
+            ),
+            added_version="26.8.3",
+            example=ConfigExample(local="4", prod="4"),
+        ),
+    ]
+    spot_cgroup_parent: Annotated[
+        str,
+        Field(
+            default="",
+            validation_alias=AliasChoices("spot-cgroup-parent", "spot_cgroup_parent"),
+            serialization_alias="spot-cgroup-parent",
+        ),
+        BackendAIConfigMeta(
+            description=(
+                "Docker CgroupParent for spot containers, for example 'spot.slice', so that "
+                "a systemd slice caps the CPU and memory the whole spot pool can use. "
+                "The slice must already exist. Empty (the default) leaves CgroupParent unset. "
+                "Only used when spot-slot-suffix is set."
+            ),
+            added_version="26.8.3",
+            example=ConfigExample(local="", prod="spot.slice"),
+        ),
+    ]
 
     model_config = ConfigDict(
         extra="allow",

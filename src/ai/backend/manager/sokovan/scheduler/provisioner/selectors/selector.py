@@ -155,6 +155,7 @@ class PlacementPlan:
         cls,
         items: Sequence[ResourceRequirements],
         cluster_mode: ClusterMode,
+        spot_slot_suffix: str = "",
     ) -> PlacementPlan:
         """Group per-item requirements into placement groups by cluster mode.
 
@@ -162,11 +163,18 @@ class PlacementPlan:
         agent hosts all containers, slots summed, architectures must
         agree); multi-node sessions keep one group per item.
 
+        With a non-empty ``spot_slot_suffix``, spot items (those requesting a
+        ``*<suffix>`` slot) drop cpu and mem first: they are served from the
+        agent's shared pool and must not be fitted against node capacity.
+
         Raises:
             ValueError: If a single-node session mixes architectures.
         """
         if not items:
             return cls(groups=[])
+
+        if spot_slot_suffix:
+            items = [item.without_spot_pooled_slots(spot_slot_suffix) for item in items]
 
         if cluster_mode == ClusterMode.SINGLE_NODE:
             architectures = {item.required_architecture for item in items}
@@ -198,7 +206,9 @@ class PlacementPlan:
         )
 
     @classmethod
-    def from_placement(cls, placement: SessionPlacement) -> PlacementPlan:
+    def from_placement(
+        cls, placement: SessionPlacement, spot_slot_suffix: str = ""
+    ) -> PlacementPlan:
         """Project a session placement into the plan; indices refer to
         positions in ``placement.kernels``."""
         return cls.from_items(
@@ -211,6 +221,7 @@ class PlacementPlan:
                 for kernel in placement.kernels
             ],
             placement.cluster_mode,
+            spot_slot_suffix,
         )
 
     def requirements(self) -> list[ResourceRequirements]:

@@ -251,6 +251,7 @@ def _build_controller(
     hook_status: Any = PASSED,
 ) -> tuple[SchedulingController, MagicMock, MagicMock]:
     config_provider = MagicMock()
+    config_provider.config.session.spot_slot_suffix = ""
     storage_manager = MagicMock()
     event_producer = MagicMock()
     event_producer.broadcast_events_batch = AsyncMock()

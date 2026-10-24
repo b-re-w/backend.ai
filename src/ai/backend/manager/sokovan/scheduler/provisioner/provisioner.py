@@ -366,7 +366,10 @@ class SessionProvisioner:
         """
         # Project the workload's placement into the plan (requirement +
         # kernel pairs) and the agent selection criteria.
-        plan = PlacementPlan.from_placement(session_workload.placement)
+        plan = PlacementPlan.from_placement(
+            session_workload.placement,
+            self._config_provider.config.session.spot_slot_suffix,
+        )
         criteria = AgentSelectionCriteria.from_workload(
             session_workload,
             plan,

@@ -12,6 +12,7 @@ from decimal import Decimal
 
 from ai.backend.common.identifier.architecture import ArchName
 from ai.backend.common.identifier.resource_slot import ResourceSlotName
+from ai.backend.common.spot import drop_pooled_slots
 from ai.backend.manager.views.sokovan.workload import ResourceRequest
 
 
@@ -30,6 +31,19 @@ class ResourceRequirements:
     required_architecture: ArchName
     # Number of containers this requirement puts on the selected agent
     container_count: int
+
+    def without_spot_pooled_slots(self, spot_slot_suffix: str) -> ResourceRequirements:
+        """Copy with cpu and mem removed if this requirement is a spot one
+        (it requests a ``*<spot_slot_suffix>`` slot); otherwise ``self``."""
+        slots = self.requested_slots.slots
+        kept = drop_pooled_slots(slots, spot_slot_suffix)
+        if len(kept) == len(slots):
+            return self
+        return ResourceRequirements(
+            requested_slots=ResourceRequest(slots=kept),
+            required_architecture=self.required_architecture,
+            container_count=self.container_count,
+        )
 
 
 @dataclass

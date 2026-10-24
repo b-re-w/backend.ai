@@ -372,7 +372,9 @@ class SchedulingController:
                 raise InternalServerError(
                     "agent_selection_policy unresolved after the defaults merge"
                 )
-            plan = PlacementPlan.from_items(items, cluster_mode)
+            plan = PlacementPlan.from_items(
+                items, cluster_mode, self._config_provider.config.session.spot_slot_suffix
+            )
             criteria = AgentSelectionCriteria(
                 # The fitting check has no real session; the id only feeds
                 # the failed-agent retry filter, which is a no-op here.

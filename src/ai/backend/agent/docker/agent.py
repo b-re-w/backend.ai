@@ -96,6 +96,7 @@ from ai.backend.agent.resources import (
     known_slot_types,
 )
 from ai.backend.agent.scratch import create_loop_filesystem, destroy_loop_filesystem
+from ai.backend.agent.spot import apply_spot_container_config
 from ai.backend.agent.types import (
     AgentEventData,
     Container,
@@ -1338,6 +1339,17 @@ class DockerKernelCreationContext(AbstractKernelCreationContext[DockerKernel]):
             label for label in service_ports_label if label
         ])
         update_nested_dict(container_config, self.computer_docker_args)
+        if apply_spot_container_config(
+            container_config,
+            resource_spec.slots,
+            spot_slot_suffix=self.local_config.resource.spot_slot_suffix,
+            cgroup_parent=self.local_config.resource.spot_cgroup_parent,
+        ):
+            log.info(
+                "kernel {} is a spot kernel: soft CPU/memory limits, cgroup parent {!r}",
+                self.kernel_id,
+                self.local_config.resource.spot_cgroup_parent,
+            )
         kernel_name = f"kernel.{self.image_ref.name.split('/')[-1]}.{self.kernel_id}"
 
         # optional local override of docker config
@@ -1368,7 +1380,9 @@ class DockerKernelCreationContext(AbstractKernelCreationContext[DockerKernel]):
             self.port_pool.release_many(host_ports)
             async with self.resource_lock:
                 for dev_name, device_alloc in resource_spec.allocations.items():
-                    self.computers[dev_name].alloc_map.free(device_alloc)
+                    self.computers[dev_name].alloc_map_for_slots(resource_spec.slots).free(
+                        device_alloc
+                    )
 
         # We are all set! Create and start the container.
         async with closing_async(Docker()) as docker:

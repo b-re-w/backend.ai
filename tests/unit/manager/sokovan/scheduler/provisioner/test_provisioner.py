@@ -55,6 +55,7 @@ def _make_provisioner(
 ) -> SessionProvisioner:
     config_provider = MagicMock()
     config_provider.config.manager.agent_selection_resource_priority = ["cpu", "mem"]
+    config_provider.config.session.spot_slot_suffix = ""
     return SessionProvisioner(
         SessionProvisionerArgs(
             validator=SchedulingValidator([

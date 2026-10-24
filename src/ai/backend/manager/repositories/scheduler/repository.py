@@ -120,7 +120,9 @@ class SchedulerRepository:
         storage_manager: StorageSessionManager,
     ) -> None:
         self._db = db
-        self._db_source = ScheduleDBSource(db)
+        self._db_source = ScheduleDBSource(
+            db, config_provider.config.session.spot_slot_suffix
+        )
         self._cache_source = ScheduleCacheSource(valkey_stat)
         self._valkey_schedule = valkey_schedule
         self._config_provider = config_provider

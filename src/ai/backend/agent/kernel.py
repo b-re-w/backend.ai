@@ -305,7 +305,9 @@ class AbstractKernel(UserDict[str, Any], aobject, metaclass=ABCMeta):
         to the allocation maps.
         """
         for accel_key, accel_alloc in self.resource_spec.allocations.items():
-            computer_ctxs[accel_key].alloc_map.free(accel_alloc)
+            computer_ctxs[accel_key].alloc_map_for_slots(self.resource_spec.slots).free(
+                accel_alloc
+            )
 
     @property
     def stats_enabled(self) -> bool:

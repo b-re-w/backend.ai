@@ -43,6 +43,7 @@ from ai.backend.agent.errors.resources import (
 from ai.backend.common.etcd import AsyncEtcd
 from ai.backend.common.json import dump_json_str, load_json
 from ai.backend.common.plugin import AbstractPlugin, BasePluginContext
+from ai.backend.common.spot import SPOT_POOLED_SLOT_NAMES, is_spot_slots
 from ai.backend.common.types import (
     AcceleratorMetadata,
     AgentId,
@@ -101,6 +102,38 @@ class ComputerContext:
     instance: AbstractComputePlugin
     devices: Collection[AbstractComputeDevice]
     alloc_map: AbstractAllocMap
+    # Overcommit-sized bookkeeping map for spot kernels (cpu/mem only), see
+    # ai.backend.common.spot. None unless the spot pool is enabled.
+    spot_alloc_map: AbstractAllocMap | None = None
+    spot_slot_suffix: str = ""
+
+    def alloc_map_for(self, is_spot: bool) -> AbstractAllocMap:
+        """The map a kernel's allocation must be booked in and freed from."""
+        if is_spot and self.spot_alloc_map is not None:
+            return self.spot_alloc_map
+        return self.alloc_map
+
+    def alloc_map_for_slots(self, slots: Mapping[Any, Any]) -> AbstractAllocMap:
+        """Like :meth:`alloc_map_for`, classifying a kernel by its slot request."""
+        return self.alloc_map_for(is_spot_slots(slots, self.spot_slot_suffix))
+
+
+def build_spot_alloc_map(base: AbstractAllocMap, factor: int) -> AbstractAllocMap | None:
+    """Build the spot twin of an intrinsic cpu/mem alloc map whose per-device
+    capacities are ``factor`` times larger. Only discrete-property maps (what the
+    intrinsic cpu and mem plugins use) are supported; others yield None, which
+    makes spot kernels share the real map (no overcommit, still safe)."""
+    if not isinstance(base, DiscretePropertyAllocMap):
+        return None
+    return DiscretePropertyAllocMap(
+        allocation_strategy=base.allocation_strategy,
+        device_slots={
+            dev_id: DeviceSlotInfo(info.slot_type, info.slot_name, info.amount * factor)
+            for dev_id, info in base.device_slots.items()
+        },
+        device_mask=base.device_mask,
+        exclusive_slot_types=base.exclusive_slot_types,
+    )
 
 
 @dataclass
@@ -559,7 +592,9 @@ class ResourceAllocator(aobject):
         for name, computer in computers.items():
             devices = await computer.list_devices()
             alloc_map = await computer.create_alloc_map()
-            computer_contexts[name] = ComputerContext(computer, devices, alloc_map)
+            computer_contexts[name] = self._make_computer_context(
+                name, computer, devices, alloc_map
+            )
         self.computers = computer_contexts
         total_slots = self._calculate_total_slots()
         self.available_total_slots = self._calculate_available_total_slots(total_slots)
@@ -581,6 +616,26 @@ class ResourceAllocator(aobject):
         self.agent_resource_scaling_factor = agent_resource_scaling_factor
 
         self._ensure_slots_are_not_overallocated()
+
+    def _make_computer_context(
+        self,
+        name: DeviceName,
+        instance: AbstractComputePlugin,
+        devices: Collection[AbstractComputeDevice],
+        alloc_map: AbstractAllocMap,
+    ) -> ComputerContext:
+        resource_config = self.local_config.resource
+        suffix = resource_config.spot_slot_suffix
+        if not suffix or str(name) not in SPOT_POOLED_SLOT_NAMES:
+            return ComputerContext(instance, devices, alloc_map)
+        spot_alloc_map = build_spot_alloc_map(alloc_map, resource_config.spot_overcommit_factor)
+        if spot_alloc_map is None:
+            log.error(
+                "spot pool: cannot build an overcommit alloc map for device {}; "
+                "spot kernels will share its real alloc map",
+                name,
+            )
+        return ComputerContext(instance, devices, alloc_map, spot_alloc_map, suffix)
 
     async def __aexit__(self, *exc_info: Any) -> None:
         for _, computer in self.computers.items():
@@ -674,8 +729,8 @@ class ResourceAllocator(aobject):
             devices_allocated_slots.append(device_allocated_slots)
 
             agent_alloc_map = await ctx.instance.create_alloc_map()
-            agent_computers[device_name] = ComputerContext(
-                ctx.instance, ctx.devices, agent_alloc_map
+            agent_computers[device_name] = self._make_computer_context(
+                device_name, ctx.instance, ctx.devices, agent_alloc_map
             )
 
             device_reserved_slots = self._calculate_reserved_slots(
@@ -993,8 +1048,16 @@ def allocate(
     """
     Updates the allocation maps of the given computer contexts by allocating the given resource spec.
     If it fails, the entire modification of allocation maps is rolled back to the initial state.
+
+    A spot kernel (see ``ai.backend.common.spot``) books its cpu and mem in the
+    overcommit-sized ``spot_alloc_map`` of those devices instead, when they have one.
+    The suffix comes from the computer contexts (set from the agent config).
     """
     slots = resource_spec.slots
+    spot_slot_suffix = next(
+        (c.spot_slot_suffix for c in computers.values() if c.spot_slot_suffix), ""
+    )
+    is_spot = is_spot_slots(slots, spot_slot_suffix)
 
     # Sort out the device names in the resource spec based on the configured allocation order
     dev_names: set[DeviceName] = set()
@@ -1008,8 +1071,11 @@ def allocate(
         affinity_map,
         affinity_policy,
     )
+    target_alloc_maps = {
+        dev_name: computers[dev_name].alloc_map_for(is_spot) for dev_name in ordered_dev_names
+    }
     current_dev_alloc_maps = {
-        dev_name: copy.deepcopy(computers[dev_name].alloc_map.allocations)
+        dev_name: copy.deepcopy(target_alloc_maps[dev_name].allocations)
         for dev_name in ordered_dev_names
     }
 
@@ -1023,15 +1089,16 @@ def allocate(
                 if raw_slot_name == dev_name or raw_slot_name.startswith(f"{dev_name}.")
             }
             try:
-                if isinstance(computer_ctx.alloc_map, FractionAllocMap):
-                    resource_spec.allocations[dev_name] = computer_ctx.alloc_map.allocate(
+                target_alloc_map = target_alloc_maps[dev_name]
+                if isinstance(target_alloc_map, FractionAllocMap):
+                    resource_spec.allocations[dev_name] = target_alloc_map.allocate(
                         device_specific_slots,
                         affinity_hint=affinity_hint,
                         context_tag=dev_name,
                         allow_resource_fragmentation=allow_fractional_resource_fragmentation,
                     )
                 else:
-                    resource_spec.allocations[dev_name] = computer_ctx.alloc_map.allocate(
+                    resource_spec.allocations[dev_name] = target_alloc_map.allocate(
                         device_specific_slots,
                         affinity_hint=affinity_hint,
                         context_tag=dev_name,
@@ -1062,7 +1129,7 @@ def allocate(
     except ResourceError:
         # rollback the entire allocations in all devices
         for dev in ordered_dev_names:
-            computers[dev].alloc_map.allocations = current_dev_alloc_maps[dev]
+            target_alloc_maps[dev].allocations = current_dev_alloc_maps[dev]
         raise
 
 

@@ -192,6 +192,7 @@ from ai.backend.common.metrics.metric import CommonMetricRegistry
 from ai.backend.common.plugin.monitor import ErrorPluginContext, StatsPluginContext
 from ai.backend.common.runner.types import Runner
 from ai.backend.common.service_ports import parse_service_ports
+from ai.backend.common.spot import SPOT_CONTAINER_LABEL
 from ai.backend.common.typed_validators import HostPortPair
 from ai.backend.common.types import (
     AbuseReportValue,
@@ -1782,12 +1783,15 @@ class AbstractAgent[
         async with self.resource_lock:
             for computer_ctx in self.computers.values():
                 computer_ctx.alloc_map.clear()
+                if computer_ctx.spot_alloc_map is not None:
+                    computer_ctx.spot_alloc_map.clear()
             for kernel_id, container in containers:
+                is_spot = container.labels.get(SPOT_CONTAINER_LABEL) == "1"
                 for computer_ctx in self.computers.values():
                     try:
                         await computer_ctx.instance.restore_from_container(
                             container,
-                            computer_ctx.alloc_map,
+                            computer_ctx.alloc_map_for(is_spot),
                         )
                     except Exception:
                         log.warning(
@@ -2287,12 +2291,13 @@ class AbstractAgent[
                         if p.host_port is not None:
                             self.port_pool.discard(p.host_port)
                     # Restore compute resources.
+                    is_spot = container.labels.get(SPOT_CONTAINER_LABEL) == "1"
                     async with self.resource_lock:
                         for computer_ctx in self.computers.values():
                             try:
                                 await computer_ctx.instance.restore_from_container(
                                     container,
-                                    computer_ctx.alloc_map,
+                                    computer_ctx.alloc_map_for(is_spot),
                                 )
                             except FileNotFoundError:
                                 log.warning(
@@ -2327,6 +2332,10 @@ class AbstractAgent[
         log.info("starting with resource allocations")
         for computer_name, computer_ctx in self.computers.items():
             log.info("{}: {!r}", computer_name, dict(computer_ctx.alloc_map.allocations))
+            if computer_ctx.spot_alloc_map is not None:
+                log.info(
+                    "{} (spot): {!r}", computer_name, dict(computer_ctx.spot_alloc_map.allocations)
+                )
 
     @abstractmethod
     async def init_kernel_context(

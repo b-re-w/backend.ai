@@ -37,6 +37,7 @@ from ai.backend.common.identifier.resource_slot import ResourceSlotName
 from ai.backend.common.identifier.session_group import SessionGroupID
 from ai.backend.common.identifier.user import UserID
 from ai.backend.common.resource.types import TotalResourceData
+from ai.backend.common.spot import SPOT_POOLED_SLOT_NAMES, is_spot_slots
 from ai.backend.common.types import (
     AccessKey,
     AgentId,
@@ -253,6 +254,17 @@ class _PreemptionScopeMatch:
     group_wide_key: PreemptionScopeKey | None
 
 
+def _held_amount(skip_slots: frozenset[str]) -> Any:
+    """SQL expression for the amount a new allocation row holds on its agent:
+    ``requested``, except 0 for the slots in ``skip_slots``."""
+    if not skip_slots:
+        return ResourceAllocationRow.requested
+    return sa.case(
+        (ResourceAllocationRow.slot_name.in_(sorted(skip_slots)), sa.literal(0)),
+        else_=ResourceAllocationRow.requested,
+    )
+
+
 class ScheduleDBSource:
     """
     Database source for schedule-related operations.
@@ -260,12 +272,17 @@ class ScheduleDBSource:
     """
 
     _db: ExtendedAsyncSAEngine
+    _spot_slot_suffix: str
 
     def __init__(
         self,
         db: ExtendedAsyncSAEngine,
+        spot_slot_suffix: str = "",
     ) -> None:
         self._db = db
+        # Non-empty enables the spot shared pool: spot kernels do not hold
+        # cpu and mem on the agent (see ai.backend.common.spot).
+        self._spot_slot_suffix = spot_slot_suffix
 
     async def fetch_scheduling_fetch(
         self, resource_group_id: ResourceGroupID
@@ -2717,6 +2734,33 @@ class ScheduleDBSource:
             )
             return True
 
+    async def _pooled_slots_to_skip(
+        self,
+        db_sess: SASession,
+        kernel_id: KernelId,
+    ) -> frozenset[str]:
+        """Slots whose agent-side hold must be skipped for this kernel.
+
+        Spot kernels (an active allocation row for a ``*<suffix>`` slot with a
+        positive ``requested``) are served from the agent's shared cpu/mem pool,
+        so they hold nothing of ``cpu`` and ``mem`` on ``agent_resources``. The
+        rows keep ``requested`` so quotas and displays stay unchanged. Empty
+        when the feature is off or the kernel is not a spot kernel.
+        """
+        if not self._spot_slot_suffix:
+            return frozenset()
+        rows = (
+            await db_sess.execute(
+                sa.select(ResourceAllocationRow.slot_name, ResourceAllocationRow.requested).where(
+                    ResourceAllocationRow.kernel_id == kernel_id,
+                    ResourceAllocationRow.free_at.is_(None),
+                )
+            )
+        ).all()
+        if is_spot_slots({r.slot_name: r.requested for r in rows}, self._spot_slot_suffix):
+            return SPOT_POOLED_SLOT_NAMES
+        return frozenset()
+
     async def _allocate_kernel_resources(
         self,
         db_sess: SASession,
@@ -2742,8 +2786,13 @@ class ScheduleDBSource:
         if not agent_id or not occupied_slots:
             return
         ar = AgentResourceRow.__table__
+        skip_slots = await self._pooled_slots_to_skip(db_sess, kernel_id)
         slots = sorted(resource_slot_to_quantities(occupied_slots), key=lambda s: s.slot_name)
         for s in slots:
+            if s.slot_name in skip_slots:
+                # Spot kernel: cpu/mem come from the shared pool and were never
+                # reserved on the agent, so there is nothing to move into ``used``.
+                continue
             # ``reserved`` is not SET here, so RETURNING yields the amount the
             # row still held; it is zeroed right after the move.
             alloc_result = await db_sess.execute(
@@ -2800,6 +2849,7 @@ class ScheduleDBSource:
         a stable order to avoid deadlocks with concurrent releases.
         """
         ar = AgentResourceRow.__table__
+        skip_slots = await self._pooled_slots_to_skip(db_sess, kernel_id)
         requested_rows = (
             await db_sess.execute(
                 sa.select(ResourceAllocationRow.slot_name, ResourceAllocationRow.requested)
@@ -2812,6 +2862,8 @@ class ScheduleDBSource:
             )
         ).all()
         for r in requested_rows:
+            if r.slot_name in skip_slots:
+                continue
             new_reserved = ar.c.reserved + r.requested
             result = await db_sess.execute(
                 sa.update(ar)
@@ -2826,7 +2878,7 @@ class ScheduleDBSource:
                 raise AgentResourceCapacityExceeded(
                     f"Agent {agent_id}: capacity exceeded for slot '{r.slot_name}'"
                 )
-        await self._stamp_allocations_reserved(db_sess, kernel_id)
+        await self._stamp_allocations_reserved(db_sess, kernel_id, skip_slots)
 
     async def _prereserve_kernel_resources(
         self,
@@ -2847,6 +2899,7 @@ class ScheduleDBSource:
         transaction.
         """
         ar = AgentResourceRow.__table__
+        skip_slots = await self._pooled_slots_to_skip(db_sess, kernel_id)
         stamped_rows = (
             await db_sess.execute(
                 sa.update(ResourceAllocationRow)
@@ -2858,7 +2911,7 @@ class ScheduleDBSource:
                 )
                 .values(
                     prereserved_at=sa.func.now(),
-                    prereserved=ResourceAllocationRow.requested,
+                    prereserved=_held_amount(skip_slots),
                 )
                 .returning(ResourceAllocationRow.slot_name, ResourceAllocationRow.prereserved)
             )
@@ -2888,10 +2941,12 @@ class ScheduleDBSource:
         self,
         db_sess: SASession,
         kernel_id: KernelId,
+        skip_slots: frozenset[str] = frozenset(),
     ) -> None:
         """Record the admitted hold on the kernel's active allocation rows:
         the amount into the row's ``reserved`` bucket and the time into
-        ``reserved_at`` (idempotent via the ``reserved_at IS NULL`` guard)."""
+        ``reserved_at`` (idempotent via the ``reserved_at IS NULL`` guard).
+        Slots in ``skip_slots`` (spot cpu/mem) are stamped with a zero hold."""
         await db_sess.execute(
             sa.update(ResourceAllocationRow)
             .where(
@@ -2902,7 +2957,7 @@ class ScheduleDBSource:
             )
             .values(
                 reserved_at=sa.func.now(),
-                reserved=ResourceAllocationRow.requested,
+                reserved=_held_amount(skip_slots),
             )
         )
 
